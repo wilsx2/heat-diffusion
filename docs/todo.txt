@@ -3,4 +3,9 @@
     [X] Boundary Conditions
     [ ] Input
     [ ] Output (.ppm)
+    [ ] SI Units
 [ ] Object Orient
+[ ] Parallel via OpenMP
+[ ] Distribute via OpenMPI
+[ ] I/O via HDF5
+[ ] Visualize via ParaView

@@ -1,0 +1,6 @@
+[ ] Single-file MVP
+    [X] Iterations
+    [X] Boundary Conditions
+    [ ] Input
+    [ ] Output (.ppm)
+[ ] Object Orient

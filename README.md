@@ -1,3 +1,3 @@
-# CMake C++ Project Template
+# wac-heat
 
-Fork to use.
+A heat diffusion simulation

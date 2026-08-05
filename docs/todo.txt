@@ -1,10 +1,11 @@
 [ ] Single-file MVP
     [X] Iterations
     [X] Boundary Conditions
-    [ ] Input
-    [ ] Output (.ppm)
-    [ ] SI Units
+    [X] Input
+    [X] Output (.ppm)
 [ ] Object Orient
+[ ] SI Units
+[ ] Make N-Dimensional
 [ ] Parallel via OpenMP
 [ ] Distribute via OpenMPI
 [ ] I/O via HDF5

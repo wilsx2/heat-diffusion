@@ -31,10 +31,21 @@ OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
     )
 endif()
 
+# Packages
+include(FetchContent)
+FetchContent_Declare(
+    argparse
+    GIT_REPOSITORY https://github.com/p-ranav/argparse.git
+)
+FetchContent_MakeAvailable(argparse)
+
 # Application
 add_executable(wacheat
     src/main.cpp
 )
 target_include_directories(wacheat PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(wacheat
+    argparse
 )

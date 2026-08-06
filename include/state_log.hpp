@@ -28,7 +28,7 @@ public:
         return std::filesystem::is_directory(_directory);
     }
     template <typename T, ssize_t D>
-    auto dump(const boost::multi::array<T, D> &array) -> bool {
+    auto operator()(const boost::multi::array<T, D> &array) -> bool {
         /*return std::format(
             "state_{:0{}d}.{}", _logs,
             _max_logs > 0 ? std::to_string(_max_logs - 1).length() : 1,

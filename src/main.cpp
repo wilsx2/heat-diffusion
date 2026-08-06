@@ -1,3 +1,4 @@
+#include "fdm.hpp"
 #include "ppm_format.hpp"
 #include "state_log.hpp"
 #include <argparse/argparse.hpp>
@@ -75,61 +76,16 @@ int main(int argc, char *argv[]) {
     auto west{program.get<float>("--west")};
     auto south{program.get<float>("--south")};
 
-    // Init data
-    auto domain_curr = multi::array<float, 2>(
-        {domain_width, domain_height}, (north + east + west + south) / 4.f);
-    auto domain_next{multi::array<float, 2>({domain_width, domain_height})};
-    auto norm_diff{0.f};
+    auto solver = GeneralPDESolver<multi::array<float, 2>, CardinalDirichlet<float>, Heat2D<float>, StateLog<PPM>, IterationCondition>{
+        {multi::array<float, 2>({domain_width, domain_height},
+                                (north + east + west + south) / 4.f)},
+        {CardinalDirichlet{north, south, east, west}},
+        {Heat2D{diffusion, space_step, time_step}},
+        {StateLog{"heatmap",
+                  PPM(std::max({north, south, east,
+                                west}))}}, // TODO: Decorate with IntervalLog
+        {IterationCondition{max_iterations}}}; // TODO: Conjoin with StabilityCondition using UnionCondition
+    solver.solve();
 
-    // Set boundary conditions
-    auto set_boundary_conditions{[&](auto &domain) {
-        // NOTE: Would be faster with std::fill
-        auto cols{std::views::iota(0, domain_width)};
-        for (auto x : cols) {
-            domain[x][0] = north;
-            domain[x][domain_height - 1] = south;
-        }
-
-        auto rows{std::views::iota(0, domain_height)};
-        for (auto y : rows) {
-            domain[0][y] = west;
-            domain[domain_width - 1][y] = east;
-        }
-    }};
-    set_boundary_conditions(domain_curr);
-    set_boundary_conditions(domain_next);
-
-    auto iterations{0u};
-    StateLog log{"heatmap", PPM(std::max({north, south, east, west}))};
-    if (!log.is_open()) {
-        std::exit(EXIT_FAILURE);
-    }
-    log.dump(domain_curr);
-    do {
-        auto inner_coords{std::views::cartesian_product(
-            std::views::iota(1, domain_width - 1),
-            std::views::iota(1, domain_height - 1))};
-
-        norm_diff = 0.f;
-        for (auto [x, y] : inner_coords) {
-            auto neighbor_sum{domain_curr[x + 1][y] + domain_curr[x - 1][y] +
-                              domain_curr[x][y + 1] + domain_curr[x][y - 1]};
-            auto delta{neighbor_sum - 4.f * domain_curr[x][y]};
-            domain_next[x][y] = domain_curr[x][y] + gamma * delta;
-            auto diff{domain_next[x][y] - domain_curr[x][y]};
-            norm_diff += diff * diff;
-        }
-
-
-        std::swap(domain_curr, domain_next);
-        iterations++;
-
-        std::print("nd @ iter {} = {}\n", iterations, norm_diff);
-        if (iterations % checkpoint == 0) {
-            log.dump(domain_curr);
-        }
-    } while (norm_diff > epsilon && iterations < max_iterations);
-
-    // Save PPM
     return 0;
 }

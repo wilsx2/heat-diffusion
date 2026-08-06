@@ -34,6 +34,12 @@ endif()
 # Packages
 include(FetchContent)
 FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG        v1.15.0
+)
+FetchContent_MakeAvailable(spdlog)
+FetchContent_Declare(
     argparse
     GIT_REPOSITORY https://github.com/p-ranav/argparse.git
 )
@@ -54,4 +60,5 @@ target_include_directories(wacheat PUBLIC
 target_link_libraries(wacheat PUBLIC
     argparse
     multi
+    spdlog
 )

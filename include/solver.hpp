@@ -1,5 +1,6 @@
 #pragma once
 
+#include <spdlog/spdlog.h>
 #include <concepts>
 
 template <
@@ -28,14 +29,17 @@ public:
           _equation_solver(equation_solver), _convergence(convergence),
           _storage(storage), _storage_interval(storage_interval) {}
     auto solve() -> void {
+        SPDLOG_TRACE("Beginning solver");
         auto iterations{0u};
         _storage(_curr);
         do {
+            SPDLOG_TRACE("Iteration {}", iterations);
             _boundaries(_curr);
             _equation_solver(_curr, _next);
             using std::swap;
             swap(_curr, _next);
             if (++iterations % _storage_interval == 0) {
+                SPDLOG_TRACE("Storing");
                 _storage(_curr);
             }
         } while (!_convergence(_curr, _next));

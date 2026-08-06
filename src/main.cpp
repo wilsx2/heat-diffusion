@@ -1,3 +1,7 @@
+#ifndef SPDLOG_ACTIVE_LEVEL
+#define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
+#endif
+
 #include "boundary.hpp"
 #include "convergence.hpp"
 #include "heat.hpp"
@@ -5,6 +9,7 @@
 #include "solver.hpp"
 #include "storage.hpp"
 
+#include <spdlog/spdlog.h>
 #include <argparse/argparse.hpp>
 #include <multi/array.hpp>
 
@@ -49,6 +54,7 @@ int main(int argc, char *argv[]) {
     program.add_argument("--south", "-S")
         .scan<'f', float>()
         .default_value(100.f);
+    program.add_argument("--log").default_value("info");
 
     try {
         program.parse_args(argc, argv);
@@ -57,6 +63,24 @@ int main(int argc, char *argv[]) {
         std::cerr << program;
         std::exit(EXIT_FAILURE);
     }
+
+    spdlog::set_level([&]() {
+        auto level{program.get<std::string>("--log")};
+        if (level == "trace") {
+            return spdlog::level::trace;
+        } else if (level == "debug") {
+            return spdlog::level::debug;
+        } else if (level == "info") {
+            return spdlog::level::info;
+        } else if (level == "warn") {
+            return spdlog::level::warn;
+        } else if (level == "err") {
+            return spdlog::level::err;
+        } else if (level == "critical") {
+            return spdlog::level::critical;
+        }
+        return spdlog::level::off;
+    }());
 
     auto domain_width{program.get<int>("--domain-width")};
     auto domain_height{program.get<int>("--domain-height")};

@@ -1,8 +1,9 @@
 #pragma once
 
+#include <spdlog/spdlog.h>
+#include <multi/array_ref.hpp>
 #include <filesystem>
 #include <fstream>
-#include <multi/array_ref.hpp>
 
 template <typename State, typename Format>
 auto serialize(std::ostream &, const State &, const Format &);
@@ -24,7 +25,10 @@ public:
     auto open(std::filesystem::path directory) -> bool {
         _directory = directory;
         if (!std::filesystem::is_directory(directory)) {
+            SPDLOG_TRACE("Creating directory '{}'", directory.string());
             std::filesystem::create_directory(directory);
+        } else {
+            SPDLOG_TRACE("Directory '{}' already exists", directory.string());
         }
         return is_open();
     }

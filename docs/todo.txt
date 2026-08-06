@@ -7,11 +7,16 @@
     [X] Storage Policy
     [X] Storage Overloads
     [X] Break into multiple files
-[ ] spdlog
-[ ] Make N-Dimensional
+[X] spdlog
+[ ] Validate physical validity
 [ ] Parallel via OpenMP
 [ ] Distribute via OpenMPI
 [ ] I/O via HDF5
 [ ] Visualize via ParaView
+[ ] Performance monitoring
 
-[ ] Extend generics
+[ ] Generic input file parser
+[ ] Make N-Dimensional
+[ ] Other FDM Boundary Conditions
+[ ] FEM
+[ ] FEM Boundary Conditions

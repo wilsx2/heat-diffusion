@@ -1,5 +1,6 @@
 #pragma once
 
+#include <spdlog/spdlog.h>
 #include <concepts>
 #include <multi/array.hpp>
 
@@ -17,6 +18,7 @@ struct StabilityAndIterationConditions {
             total_norm_delta += delta * delta;
         }
         auto avg_norm_delta{total_norm_delta / static_cast<R>(curr.size())};
+        SPDLOG_TRACE("avg_norm_delta: {}", avg_norm_delta);
         return avg_norm_delta < epsilon ||
                current_iterations++ >= max_iterations;
     }

@@ -29,7 +29,15 @@ int main(int argc, char *argv[]) {
     program.add_argument("--max-iterations", "-i")
         .scan<'u', unsigned>()
         .default_value(10'000u);
-
+    program.add_argument("--diffusion-factor", "-a")
+        .scan<'f', float>()
+        .default_value(1.f);
+    program.add_argument("--time-step", "-dt")
+        .scan<'f', float>()
+        .default_value(1.f);
+    program.add_argument("--space-step", "-dx")
+        .scan<'f', float>()
+        .default_value(1.f);
     program.add_argument("--north", "-N")
         .scan<'f', float>()
         .default_value(100.f);
@@ -52,6 +60,12 @@ int main(int argc, char *argv[]) {
     auto epsilon{program.get<float>("--epsilon")};
     auto max_iterations{program.get<unsigned>("--max-iterations")};
 
+    auto diffusion{program.get<float>("--diffusion-factor")};
+    auto time_step{program.get<float>("--time-step")};
+    auto space_step{program.get<float>("--space-step")};
+    auto gamma{diffusion * (time_step / (space_step * space_step))};
+    std::println("Gamma value: {}", gamma);
+
     auto north{program.get<float>("--north")};
     auto east{program.get<float>("--east")};
     auto west{program.get<float>("--west")};
@@ -65,11 +79,15 @@ int main(int argc, char *argv[]) {
 
     // Set boundary conditions
     auto set_boundary_conditions{[&](auto &domain) {
-        std::fill(domain.begin(), domain.begin() + domain_width, north);
-        std::fill(domain.begin() + (domain_height - 1) * domain_width,
-                  domain.end(), south);
-
         std::mdspan table{domain.data(), domain_width, domain_height};
+
+        // NOTE: Would be faster with std::fill
+        auto cols{std::views::iota(0u, domain_width)};
+        for (auto x : cols) {
+            table[x, 0] = north;
+            table[x, domain_height - 1] = south;
+        }
+
         auto rows{std::views::iota(0u, domain_height)};
         for (auto y : rows) {
             table[0, y] = west;
@@ -90,10 +108,10 @@ int main(int argc, char *argv[]) {
 
         norm_diff = 0.f;
         for (auto [x, y] : inner_coords) {
-            auto stencil_sum{table_curr[x, y] + table_curr[x + 1, y] +
-                             table_curr[x - 1, y] + table_curr[x, y + 1] +
-                             table_curr[x, y - 1]};
-            table_next[x, y] = stencil_sum / 5.f;
+            auto neighbor_sum{table_curr[x + 1, y] + table_curr[x - 1, y] +
+                              table_curr[x, y + 1] + table_curr[x, y - 1]};
+            auto delta{neighbor_sum - 4.f * table_curr[x, y]};
+            table_next[x, y] = table_curr[x, y] + gamma * delta;
             auto diff{table_next[x, y] - table_curr[x, y]};
             norm_diff += diff * diff;
         }

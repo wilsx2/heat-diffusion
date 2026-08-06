@@ -3,9 +3,15 @@
     [X] Boundary Conditions
     [X] Input
     [X] Output (.ppm)
-[ ] Object Orient
+[X] Object Orient
+    [X] Storage Policy
+    [X] Storage Overloads
+    [X] Break into multiple files
+[ ] spdlog
 [ ] Make N-Dimensional
 [ ] Parallel via OpenMP
 [ ] Distribute via OpenMPI
 [ ] I/O via HDF5
 [ ] Visualize via ParaView
+
+[ ] Extend generics

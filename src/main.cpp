@@ -1,17 +1,16 @@
-#include "fdm.hpp"
-#include "ppm_format.hpp"
-#include "state_log.hpp"
+#include "boundary.hpp"
+#include "convergence.hpp"
+#include "heat.hpp"
+#include "serialization.hpp"
+#include "solver.hpp"
+#include "storage.hpp"
+
 #include <argparse/argparse.hpp>
 #include <multi/array.hpp>
 
-#include <cmath>
 #include <cstdlib>
-#include <fstream>
 #include <iostream>
-#include <mdspan>
 #include <print>
-#include <ranges>
-#include <vector>
 
 namespace multi = boost::multi;
 
@@ -68,23 +67,21 @@ int main(int argc, char *argv[]) {
     auto diffusion{program.get<float>("--diffusion-factor")};
     auto time_step{program.get<float>("--time-step")};
     auto space_step{program.get<float>("--space-step")};
-    auto gamma{diffusion * (time_step / (space_step * space_step))};
-    std::println("Gamma value: {}", gamma);
 
     auto north{program.get<float>("--north")};
     auto east{program.get<float>("--east")};
     auto west{program.get<float>("--west")};
     auto south{program.get<float>("--south")};
 
-    auto solver = GeneralPDESolver<multi::array<float, 2>, CardinalDirichlet<float>, Heat2D<float>, StateLog<PPM>, IterationCondition>{
-        {multi::array<float, 2>({domain_width, domain_height},
-                                (north + east + west + south) / 4.f)},
-        {CardinalDirichlet{north, south, east, west}},
-        {Heat2D{diffusion, space_step, time_step}},
-        {StateLog{"heatmap",
-                  PPM(std::max({north, south, east,
-                                west}))}}, // TODO: Decorate with IntervalLog
-        {IterationCondition{max_iterations}}}; // TODO: Conjoin with StabilityCondition using UnionCondition
+    auto solver{GeneralPDESolver{
+        multi::array<float, 2>({domain_width, domain_height},
+                               (north + east + west + south) / 4.f),
+        CardinalDirichlet{north, south, east, west},
+        Heat2D{diffusion, space_step, time_step},
+        StabilityAndIterationConditions{epsilon, max_iterations},
+        PersistentStorage<PPM>{"heat_map", PPM{static_cast<unsigned>(std::max(
+                                               {north, south, east, west}))}},
+        checkpoint}};
     solver.solve();
 
     return 0;

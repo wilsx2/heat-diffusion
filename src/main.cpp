@@ -1,3 +1,5 @@
+#include "ppm_format.hpp"
+#include "state_log.hpp"
 #include <argparse/argparse.hpp>
 #include <multi/array.hpp>
 
@@ -27,6 +29,9 @@ int main(int argc, char *argv[]) {
     program.add_argument("--max-iterations", "-i")
         .scan<'u', unsigned>()
         .default_value(10'000u);
+    program.add_argument("--checkpoint", "-c")
+        .scan<'u', unsigned>()
+        .default_value(1'000u);
     program.add_argument("--diffusion-factor", "-a")
         .scan<'f', float>()
         .default_value(1.f);
@@ -57,6 +62,7 @@ int main(int argc, char *argv[]) {
     auto domain_height{program.get<int>("--domain-height")};
     auto epsilon{program.get<float>("--epsilon")};
     auto max_iterations{program.get<unsigned>("--max-iterations")};
+    auto checkpoint{program.get<unsigned>("--checkpoint")};
 
     auto diffusion{program.get<float>("--diffusion-factor")};
     auto time_step{program.get<float>("--time-step")};
@@ -94,6 +100,11 @@ int main(int argc, char *argv[]) {
     set_boundary_conditions(domain_next);
 
     auto iterations{0u};
+    StateLog log{"heatmap", PPM(std::max({north, south, east, west}))};
+    if (!log.is_open()) {
+        std::exit(EXIT_FAILURE);
+    }
+    log.dump(domain_curr);
     do {
         auto inner_coords{std::views::cartesian_product(
             std::views::iota(1, domain_width - 1),
@@ -109,27 +120,16 @@ int main(int argc, char *argv[]) {
             norm_diff += diff * diff;
         }
 
-        std::print("nd @ iter {} = {}\n", iterations, norm_diff);
+
         std::swap(domain_curr, domain_next);
-    } while (norm_diff > epsilon && iterations++ < max_iterations);
+        iterations++;
+
+        std::print("nd @ iter {} = {}\n", iterations, norm_diff);
+        if (iterations % checkpoint == 0) {
+            log.dump(domain_curr);
+        }
+    } while (norm_diff > epsilon && iterations < max_iterations);
 
     // Save PPM
-    std::ofstream file("heatmap.ppm");
-    if (!file.is_open()) {
-        std::exit(EXIT_FAILURE);
-    }
-
-    auto max_temp{static_cast<unsigned>(std::max({north, east, west, south}))};
-    file << "P3\n"
-         << domain_width << " " << domain_height << "\n"
-         << max_temp << "\n";
-    for (auto y : std::views::iota(0, domain_height)) {
-        for (auto x : std::views::iota(0, domain_width)) {
-            file << static_cast<unsigned>(domain_curr[x][y]) << " " << 0u << " "
-                 << static_cast<unsigned>(max_temp - domain_curr[x][y]) << " ";
-        }
-        file << "\n";
-    }
-
     return 0;
 }

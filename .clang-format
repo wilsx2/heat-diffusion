@@ -5,4 +5,5 @@ AccessModifierOffset: -4
 ColumnLimit: 80
 NamespaceIndentation: None
 FixNamespaceComments: true
+AlwaysBreakTemplateDeclarations: Yes
 ...

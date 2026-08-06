@@ -1,4 +1,5 @@
 #include <argparse/argparse.hpp>
+#include <multi/array.hpp>
 
 #include <cmath>
 #include <cstdlib>
@@ -9,20 +10,17 @@
 #include <ranges>
 #include <vector>
 
-constexpr auto epsilon{1'000.f};
-constexpr auto max_iterations{100'000u};
+namespace multi = boost::multi;
 
-constexpr auto HOT{100.f};
-constexpr auto COLD{0.f};
 int main(int argc, char *argv[]) {
     // Parse CLI args
     argparse::ArgumentParser program("wacheat");
     program.add_argument("--domain-width", "-w")
-        .scan<'u', unsigned>()
-        .default_value(64u);
+        .scan<'i', int>()
+        .default_value(64);
     program.add_argument("--domain-height", "-h")
-        .scan<'u', unsigned>()
-        .default_value(64u);
+        .scan<'i', int>()
+        .default_value(64);
     program.add_argument("--epsilon", "-e")
         .scan<'f', float>()
         .default_value(1.f);
@@ -55,8 +53,8 @@ int main(int argc, char *argv[]) {
         std::exit(EXIT_FAILURE);
     }
 
-    auto domain_width{program.get<unsigned>("--domain-width")};
-    auto domain_height{program.get<unsigned>("--domain-height")};
+    auto domain_width{program.get<int>("--domain-width")};
+    auto domain_height{program.get<int>("--domain-height")};
     auto epsilon{program.get<float>("--epsilon")};
     auto max_iterations{program.get<unsigned>("--max-iterations")};
 
@@ -72,26 +70,24 @@ int main(int argc, char *argv[]) {
     auto south{program.get<float>("--south")};
 
     // Init data
-    std::vector<float> domain_curr(domain_width * domain_height,
-                                   (north + east + west + south) / 4.f);
-    std::vector<float> domain_next(domain_width * domain_height);
+    auto domain_curr = multi::array<float, 2>(
+        {domain_width, domain_height}, (north + east + west + south) / 4.f);
+    auto domain_next{multi::array<float, 2>({domain_width, domain_height})};
     auto norm_diff{0.f};
 
     // Set boundary conditions
     auto set_boundary_conditions{[&](auto &domain) {
-        std::mdspan table{domain.data(), domain_width, domain_height};
-
         // NOTE: Would be faster with std::fill
-        auto cols{std::views::iota(0u, domain_width)};
+        auto cols{std::views::iota(0, domain_width)};
         for (auto x : cols) {
-            table[x, 0] = north;
-            table[x, domain_height - 1] = south;
+            domain[x][0] = north;
+            domain[x][domain_height - 1] = south;
         }
 
-        auto rows{std::views::iota(0u, domain_height)};
+        auto rows{std::views::iota(0, domain_height)};
         for (auto y : rows) {
-            table[0, y] = west;
-            table[domain_width - 1, y] = east;
+            domain[0][y] = west;
+            domain[domain_width - 1][y] = east;
         }
     }};
     set_boundary_conditions(domain_curr);
@@ -99,20 +95,17 @@ int main(int argc, char *argv[]) {
 
     auto iterations{0u};
     do {
-        std::mdspan table_curr{domain_curr.data(), domain_width, domain_height};
-        std::mdspan table_next{domain_next.data(), domain_width, domain_height};
-
         auto inner_coords{std::views::cartesian_product(
-            std::views::iota(1u, domain_width - 1u),
-            std::views::iota(1u, domain_height - 1u))};
+            std::views::iota(1, domain_width - 1),
+            std::views::iota(1, domain_height - 1))};
 
         norm_diff = 0.f;
         for (auto [x, y] : inner_coords) {
-            auto neighbor_sum{table_curr[x + 1, y] + table_curr[x - 1, y] +
-                              table_curr[x, y + 1] + table_curr[x, y - 1]};
-            auto delta{neighbor_sum - 4.f * table_curr[x, y]};
-            table_next[x, y] = table_curr[x, y] + gamma * delta;
-            auto diff{table_next[x, y] - table_curr[x, y]};
+            auto neighbor_sum{domain_curr[x + 1][y] + domain_curr[x - 1][y] +
+                              domain_curr[x][y + 1] + domain_curr[x][y - 1]};
+            auto delta{neighbor_sum - 4.f * domain_curr[x][y]};
+            domain_next[x][y] = domain_curr[x][y] + gamma * delta;
+            auto diff{domain_next[x][y] - domain_curr[x][y]};
             norm_diff += diff * diff;
         }
 
@@ -130,11 +123,10 @@ int main(int argc, char *argv[]) {
     file << "P3\n"
          << domain_width << " " << domain_height << "\n"
          << max_temp << "\n";
-    std::mdspan table{domain_curr.data(), domain_width, domain_height};
-    for (auto y : std::views::iota(0u, domain_height)) {
-        for (auto x : std::views::iota(0u, domain_width)) {
-            file << static_cast<unsigned>(table[x, y]) << " " << 0u << " "
-                 << static_cast<unsigned>(max_temp - table[x, y]) << " ";
+    for (auto y : std::views::iota(0, domain_height)) {
+        for (auto x : std::views::iota(0, domain_width)) {
+            file << static_cast<unsigned>(domain_curr[x][y]) << " " << 0u << " "
+                 << static_cast<unsigned>(max_temp - domain_curr[x][y]) << " ";
         }
         file << "\n";
     }

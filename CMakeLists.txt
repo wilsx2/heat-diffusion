@@ -38,6 +38,11 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/p-ranav/argparse.git
 )
 FetchContent_MakeAvailable(argparse)
+FetchContent_Declare(
+    multi
+    GIT_REPOSITORY https://gitlab.com/correaa/boost-multi.git
+)
+FetchContent_MakeAvailable(multi)
 
 # Application
 add_executable(wacheat
@@ -46,6 +51,7 @@ add_executable(wacheat
 target_include_directories(wacheat PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_link_libraries(wacheat
+target_link_libraries(wacheat PUBLIC
     argparse
+    multi
 )

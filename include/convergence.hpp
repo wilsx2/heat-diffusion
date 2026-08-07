@@ -13,6 +13,7 @@ struct StabilityAndIterationConditions {
     auto operator()(const boost::multi::array<R, 2> &curr,
                     boost::multi::array<R, 2> &next) {
         auto total_norm_delta{R{0}};
+        # pragma omp parallel for reduction(+:total_norm_delta)
         for (auto [i, j] : curr.extents().elements()) {
             auto delta{curr[i][j] - next[i][j]};
             total_norm_delta += delta * delta;

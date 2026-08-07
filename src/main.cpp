@@ -101,7 +101,7 @@ int main(int argc, char *argv[]) {
         multi::array<float, 2>({domain_width, domain_height},
                                (north + east + west + south) / 4.f),
         CardinalDirichlet{north, south, east, west},
-        Heat2D{diffusion, space_step, time_step},
+        FDMExplicitHeat2D{diffusion, space_step, time_step},
         StabilityAndIterationConditions{epsilon, max_iterations},
         PersistentStorage<PPM>{"heat_map", PPM{static_cast<unsigned>(std::max(
                                                {north, south, east, west}))}},

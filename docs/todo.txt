@@ -8,15 +8,16 @@
     [X] Storage Overloads
     [X] Break into multiple files
 [X] spdlog
-[ ] Validate physical validity
-[ ] Parallel via OpenMP
+[X] Validate physical validity
+[X] Parallel via OpenMP
 [ ] Distribute via OpenMPI
 [ ] I/O via HDF5
 [ ] Visualize via ParaView
 [ ] Performance monitoring
 
+[ ] Implicit Method
 [ ] Generic input file parser
-[ ] Make N-Dimensional
 [ ] Other FDM Boundary Conditions
+[ ] Make N-Dimensional
 [ ] FEM
 [ ] FEM Boundary Conditions

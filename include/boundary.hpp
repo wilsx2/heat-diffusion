@@ -14,11 +14,13 @@ struct CardinalDirichlet {
         auto [is, js] = domain.extents();
 
         // NOTE: stl algorithms would very likely be faster
+        #pragma omp parallel for
         for (auto i : is) {
             domain[i][0] = north;
             domain[i][js.size() - 1] = south;
         }
 
+        #pragma omp parallel for
         for (auto j : js) {
             domain[0][j] = west;
             domain[is.size() - 1][j] = east;

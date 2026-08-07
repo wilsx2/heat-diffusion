@@ -32,6 +32,8 @@ OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
 endif()
 
 # Packages
+find_package(OpenMP REQUIRED)
+
 include(FetchContent)
 FetchContent_Declare(
     spdlog
@@ -58,6 +60,7 @@ target_include_directories(wacheat PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_link_libraries(wacheat PUBLIC
+    OpenMP::OpenMP_CXX
     argparse
     multi
     spdlog

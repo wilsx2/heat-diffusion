@@ -3,17 +3,12 @@
 #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
 #endif
 
-#include "boundary.hpp"
-#include "convergence.hpp"
-#include "heat.hpp"
-#include "serialization.hpp"
 #include "solver.hpp"
-#include "storage.hpp"
 
-#include <spdlog/spdlog.h>
 #include <argparse/argparse.hpp>
-#include <multi/array.hpp>
 #include <mpi.h>
+#include <multi/array.hpp>
+#include <spdlog/spdlog.h>
 
 #include <cstdlib>
 #include <iostream>
@@ -26,8 +21,7 @@ int main(int argc, char *argv[]) {
 
     // Parse CLI args
     argparse::ArgumentParser program("wacheat");
-    program.add_argument("--open", "-o")
-        .default_value("output");
+    program.add_argument("--output", "-o").default_value("output");
     program.add_argument("--domain-width", "-w")
         .scan<'i', int>()
         .default_value(64);
@@ -97,9 +91,6 @@ int main(int argc, char *argv[]) {
         return spdlog::level::off;
     }());
 
-    auto domain_width{program.get<int>("--domain-width")};
-    auto domain_height{program.get<int>("--domain-height")};
-    auto epsilon{program.get<float>("--epsilon")};
     auto max_iterations{program.get<unsigned>("--max-iterations")};
     auto checkpoint{program.get<unsigned>("--checkpoint")};
 
@@ -107,20 +98,31 @@ int main(int argc, char *argv[]) {
     auto time_step{program.get<float>("--time-step")};
     auto space_step{program.get<float>("--space-step")};
 
+    auto domain_width{program.get<int>("--domain-width")};
+    auto domain_height{program.get<int>("--domain-height")};
+    auto epsilon{program.get<float>("--epsilon")};
+
     auto north{program.get<float>("--north")};
     auto east{program.get<float>("--east")};
     auto west{program.get<float>("--west")};
     auto south{program.get<float>("--south")};
 
-    auto solver{SpmdPdeSolver{
+    auto solver{SpmdFdm2dExplicitHeatEqSolver{
         multi::array<float, 2>({domain_width, domain_height},
                                (north + east + west + south) / 4.f),
-        CardinalDirichlet{north, south, east, west},
-        FDMExplicitHeat2D{diffusion, space_step, time_step},
-        StabilityAndIterationConditions{epsilon, max_iterations},
-        PersistentStorage<PPM>{PPM{static_cast<unsigned>(std::max({north, south, east, west}))}},
-        checkpoint}};
-    solver.solve();
+        {
+            .diffusion_constant = diffusion,
+            .time_step = time_step,
+            .space_step = space_step,
+            .north = north,
+            .south = south,
+            .east = east,
+            .west = west,
+            .epsilon = epsilon,
+            .max_iterations = max_iterations,
+            .storage_interval = checkpoint,
+        }}};
+    solver.run();
 
     MPI_Finalize();
     return 0;

@@ -1,9 +1,14 @@
 #pragma once
 
+#include <H5Spublic.h>
+#include <concepts>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <hdf5.h>
 #include <multi/array_ref.hpp>
 #include <spdlog/spdlog.h>
+#include <string_view>
 
 template <typename State, typename Format>
 auto serialize(std::ostream &, const State &, const Format &);

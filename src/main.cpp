@@ -1,3 +1,4 @@
+#include <filesystem>
 #ifndef SPDLOG_ACTIVE_LEVEL
 #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
 #endif
@@ -21,8 +22,12 @@
 namespace multi = boost::multi;
 
 int main(int argc, char *argv[]) {
+    MPI_Init(&argc, &argv);
+
     // Parse CLI args
     argparse::ArgumentParser program("wacheat");
+    program.add_argument("--open", "-o")
+        .default_value("output");
     program.add_argument("--domain-width", "-w")
         .scan<'i', int>()
         .default_value(64);
@@ -60,8 +65,17 @@ int main(int argc, char *argv[]) {
     try {
         program.parse_args(argc, argv);
     } catch (const std::exception &err) {
-        std::println(std::cerr, "{}\n", err.what());
+        std::println(std::cerr, "{}", err.what());
         std::cerr << program;
+        std::exit(EXIT_FAILURE);
+    }
+
+    auto output_path{program.get<std::string>("--output")};
+    try {
+        std::filesystem::create_directory(output_path);
+        std::filesystem::current_path(output_path);
+    } catch (const std::exception &err) {
+        std::print("Directory '{}' failed to create or enter", output_path);
         std::exit(EXIT_FAILURE);
     }
 
@@ -82,13 +96,6 @@ int main(int argc, char *argv[]) {
         }
         return spdlog::level::off;
     }());
-
-    int rank, size;
-    MPI_Init(&argc, &argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-    spdlog::debug("Process {}/{} (rank {})", rank + 1, size, rank);
-    MPI_Finalize();
 
     auto domain_width{program.get<int>("--domain-width")};
     auto domain_height{program.get<int>("--domain-height")};
@@ -111,10 +118,10 @@ int main(int argc, char *argv[]) {
         CardinalDirichlet{north, south, east, west},
         FDMExplicitHeat2D{diffusion, space_step, time_step},
         StabilityAndIterationConditions{epsilon, max_iterations},
-        PersistentStorage<PPM>{"heat_map", PPM{static_cast<unsigned>(std::max(
-                                               {north, south, east, west}))}},
+        PersistentStorage<PPM>{PPM{static_cast<unsigned>(std::max({north, south, east, west}))}},
         checkpoint}};
     solver.solve();
 
+    MPI_Finalize();
     return 0;
 }

@@ -10,8 +10,8 @@
 [X] spdlog
 [X] Validate physical validity
 [X] Parallel via OpenMP
-[ ] Distribute via OpenMPI
 [ ] I/O via HDF5
+[ ] Distribute via OpenMPI
 [ ] Visualize via ParaView
 [ ] Performance monitoring
 

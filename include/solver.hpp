@@ -1,7 +1,9 @@
 #pragma once
 
-#include <concepts>
+#include <mpi.h>
 #include <spdlog/spdlog.h>
+
+#include <concepts>
 
 template <typename Topology, std::invocable<Topology &> BoundaryCondition,
           std::invocable<const Topology &, Topology &> EquationSolver,
@@ -9,6 +11,7 @@ template <typename Topology, std::invocable<Topology &> BoundaryCondition,
           std::invocable<const Topology &> Storage>
 class SpmdPdeSolver {
 private:
+    int _rank, _world_size;
     Topology _curr;
     Topology _next;
     BoundaryCondition _boundaries;
@@ -25,7 +28,12 @@ public:
                   Storage &&storage = {}, unsigned storage_interval = 1u)
         : _curr(domain), _next(_curr), _boundaries(boundaries),
           _equation_solver(equation_solver), _convergence(convergence),
-          _storage(storage), _storage_interval(storage_interval) {}
+          _storage(storage), _storage_interval(storage_interval) {
+        MPI_Comm_rank(MPI_COMM_WORLD, &_rank);
+        MPI_Comm_size(MPI_COMM_WORLD, &_world_size);
+
+        spdlog::debug("Process {}/{} (rank {})", _rank + 1, _world_size, _rank);
+    }
     auto solve() -> void {
         SPDLOG_TRACE("Beginning solver");
         auto iterations{0u};

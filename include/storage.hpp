@@ -1,9 +1,9 @@
 #pragma once
 
-#include <spdlog/spdlog.h>
-#include <multi/array_ref.hpp>
 #include <filesystem>
 #include <fstream>
+#include <multi/array_ref.hpp>
+#include <spdlog/spdlog.h>
 
 template <typename State, typename Format>
 auto serialize(std::ostream &, const State &, const Format &);
@@ -12,33 +12,15 @@ template <typename Format>
 class PersistentStorage {
 private:
     Format _format;
-    std::filesystem::path _directory;
     unsigned _saved_count = 0u;
 
 public:
     PersistentStorage() = default;
-    PersistentStorage(std::string_view directory, Format &&format = {})
-        : _format(format) {
-        open(directory);
-    }
-    // TODO: Handle already open directories
-    auto open(std::filesystem::path directory) -> bool {
-        _directory = directory;
-        if (!std::filesystem::is_directory(directory)) {
-            SPDLOG_TRACE("Creating directory '{}'", directory.string());
-            std::filesystem::create_directory(directory);
-        } else {
-            SPDLOG_TRACE("Directory '{}' already exists", directory.string());
-        }
-        return is_open();
-    }
-    auto is_open() const -> bool {
-        return std::filesystem::is_directory(_directory);
-    }
+    PersistentStorage(Format &&format = {}) : _format(format) {}
     template <typename State>
     auto operator()(const State &state) -> bool {
-        std::ofstream file(_directory / std::format("state_{}.{}", _saved_count,
-                                                    Format::extension));
+        std::ofstream file(
+            std::format("state_{}.{}", _saved_count, Format::extension));
         if (!file.is_open()) {
             return false;
         }

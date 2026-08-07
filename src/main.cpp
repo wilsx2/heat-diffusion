@@ -107,21 +107,20 @@ int main(int argc, char *argv[]) {
     auto west{program.get<float>("--west")};
     auto south{program.get<float>("--south")};
 
-    auto solver{SpmdFdm2dExplicitHeatEqSolver{
-        multi::array<float, 2>({domain_width, domain_height},
-                               (north + east + west + south) / 4.f),
-        {
-            .diffusion_constant = diffusion,
-            .time_step = time_step,
-            .space_step = space_step,
-            .north = north,
-            .south = south,
-            .east = east,
-            .west = west,
-            .epsilon = epsilon,
-            .max_iterations = max_iterations,
-            .storage_interval = checkpoint,
-        }}};
+    auto solver{SpmdFdm2dExplicitHeatEqSolver<float>{{
+        .domain_width = domain_width,
+        .domain_height = domain_height,
+        .diffusion_constant = diffusion,
+        .time_step = time_step,
+        .space_step = space_step,
+        .north = north,
+        .south = south,
+        .east = east,
+        .west = west,
+        .epsilon = epsilon,
+        .max_iterations = max_iterations,
+        .storage_interval = checkpoint,
+    }}};
     solver.run();
 
     MPI_Finalize();

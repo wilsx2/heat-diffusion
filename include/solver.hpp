@@ -14,6 +14,8 @@ template <std::floating_point R>
 class SpmdFdm2dExplicitHeatEqSolver {
 public:
     struct Configuration {
+        const std::ptrdiff_t domain_width;
+        const std::ptrdiff_t domain_height;
         // Heat Equation Parameters
         const R diffusion_constant;
         const R time_step;
@@ -49,14 +51,18 @@ private:
 
 public:
     SpmdFdm2dExplicitHeatEqSolver() = delete;
-    SpmdFdm2dExplicitHeatEqSolver(Topology &&domain, Configuration &&config)
+    SpmdFdm2dExplicitHeatEqSolver(Configuration &&config)
         : _constants(config),
           _gamma(_constants.diffusion_constant *
                  (_constants.time_step /
                   (_constants.space_step * _constants.space_step))),
-          _curr(domain), _next(_curr), _storage(PPM(static_cast<unsigned>(std::max({
-                                           _constants.north, _constants.south,
-                                           _constants.east, _constants.west})))) {
+          _curr({_constants.domain_width, _constants.domain_height},
+                (_constants.north + _constants.east + _constants.west +
+                 _constants.south) /
+                    4.f),
+          _next(_curr), _storage(PPM(static_cast<unsigned>(
+                            std::max({_constants.north, _constants.south,
+                                      _constants.east, _constants.west})))) {
         MPI_Comm_rank(MPI_COMM_WORLD, &_rank);
         MPI_Comm_size(MPI_COMM_WORLD, &_world_size);
 
@@ -103,6 +109,8 @@ public:
             //
             using std::swap;
             swap(_curr, _next);
+
+            // Save
             if (current_iterations % _constants.storage_interval == 0) {
                 _storage(_curr);
             }

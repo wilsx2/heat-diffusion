@@ -15,6 +15,7 @@
 [ ] Visualize via ParaView
 [ ] Performance monitoring
 
+[ ] Combine steps
 [ ] Implicit Method
 [ ] Generic input file parser
 [ ] Other FDM Boundary Conditions

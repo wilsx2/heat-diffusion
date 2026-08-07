@@ -5,4 +5,34 @@
 \section{Types of Equations}
 \subsection{Explicit}
 
+\section{Parallel Architecture}
+\subsection{Shared Memory / Intra-process / OpenMP}
+\paragraph
+    Updating each location in the domain discretization is performed in parallel.
+    In the case of calculating average delta, a reduce is performed on the total.
+
+\subsection{Multiple Memory / Inter-Process / OpenMPI}
+\paragraph
+    At the beginning of the simulation, a scatter is performed assigning partitions of the discrete domain to each process.
+    Neighborhood communication groups are created for each process comprised of it and processes which own partitions adjacent to its partition.
+    Note: We could describe this process with set builder notation.
+\paragraph
+    Each iteration step, a process broadcasts the outermost locations in its partition to its neighborhood.
+    Likewise, the process async receives relevant locations from its neighbors.
+    When a process uses locations it is to receive from its neighbors, it waits for the send to complete.
+    It should perform these operations last.
+\paragraph
+    In the case of FDM, the domain is decomposed as a grid structure $G$ of shape $n_1\cross n_2 \cross ... \cross n_d$ where $d$ is the dimensionality.
+    Each process is assigned cells in the partition
+    \[
+        G[0:n_1, 0:n_2, ...,r\lfloor\frac{n_d}{s}\rfloor:(r+1)\lfloor\frac{n_d}{s}\rfloor]
+        \text{where } r = \text{rank of the process}
+        \text{where } s = \text{world size (total processes)}
+    \]
+    In the implementation, the ownership of the last process will explicitly always end at $n_d$ to account for rounding errors, but that has been ommitted here for clarity.
+    Note that this gaurantees cells are contiguous.
+\paragraph
+    Every X iteration step or when some global condition is met, processes syncronize their results to save them.
+    (NOTE: This is subject to change I don't know what HDF5 is precisely but it may fix this.)
+
 \end{document}

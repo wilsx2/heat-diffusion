@@ -1,18 +1,16 @@
 #pragma once
 
-#include <spdlog/spdlog.h>
 #include <concepts>
+#include <spdlog/spdlog.h>
 
-template <
-    typename DiscreteDomain, std::invocable<DiscreteDomain &> BoundaryCondition,
-    std::invocable<const DiscreteDomain &, DiscreteDomain &> EquationSolver,
-    std::invocable<const DiscreteDomain &, DiscreteDomain &>
-        ConvergenceCondition,
-    std::invocable<const DiscreteDomain &> Storage>
-class GeneralPDESolver {
+template <typename Topology, std::invocable<Topology &> BoundaryCondition,
+          std::invocable<const Topology &, Topology &> EquationSolver,
+          std::invocable<const Topology &, Topology &> ConvergenceCondition,
+          std::invocable<const Topology &> Storage>
+class SpmdPdeSolver {
 private:
-    DiscreteDomain _curr;
-    DiscreteDomain _next;
+    Topology _curr;
+    Topology _next;
     BoundaryCondition _boundaries;
     EquationSolver _equation_solver;
     ConvergenceCondition _convergence;
@@ -20,11 +18,11 @@ private:
     unsigned _storage_interval;
 
 public:
-    GeneralPDESolver(DiscreteDomain &&domain,
-                     BoundaryCondition &&boundaries = {},
-                     EquationSolver &&equation_solver = {},
-                     ConvergenceCondition &&convergence = {},
-                     Storage &&storage = {}, unsigned storage_interval = 1u)
+    SpmdPdeSolver() = delete;
+    SpmdPdeSolver(Topology &&domain, BoundaryCondition &&boundaries = {},
+                  EquationSolver &&equation_solver = {},
+                  ConvergenceCondition &&convergence = {},
+                  Storage &&storage = {}, unsigned storage_interval = 1u)
         : _curr(domain), _next(_curr), _boundaries(boundaries),
           _equation_solver(equation_solver), _convergence(convergence),
           _storage(storage), _storage_interval(storage_interval) {}

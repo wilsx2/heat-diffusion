@@ -12,6 +12,7 @@
 #include <spdlog/spdlog.h>
 #include <argparse/argparse.hpp>
 #include <multi/array.hpp>
+#include <mpi.h>
 
 #include <cstdlib>
 #include <iostream>
@@ -82,6 +83,13 @@ int main(int argc, char *argv[]) {
         return spdlog::level::off;
     }());
 
+    int rank, size;
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    spdlog::debug("Process {}/{} (rank {})", rank + 1, size, rank);
+    MPI_Finalize();
+
     auto domain_width{program.get<int>("--domain-width")};
     auto domain_height{program.get<int>("--domain-height")};
     auto epsilon{program.get<float>("--epsilon")};
@@ -97,7 +105,7 @@ int main(int argc, char *argv[]) {
     auto west{program.get<float>("--west")};
     auto south{program.get<float>("--south")};
 
-    auto solver{GeneralPDESolver{
+    auto solver{SpmdPdeSolver{
         multi::array<float, 2>({domain_width, domain_height},
                                (north + east + west + south) / 4.f),
         CardinalDirichlet{north, south, east, west},

@@ -1,3 +1,5 @@
 build
 *.ppm
+output
 heatmap
+hosts.txt

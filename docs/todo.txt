@@ -15,7 +15,7 @@
     [X] Partition Array (w/ logging)
     [X] File I/O
     [X] Solving
-    [ ] Exchange
+    [X] Exchange
     [ ] Object Orient
     [ ] Persistent Async Requests
 [ ] I/O via HDF5

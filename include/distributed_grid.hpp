@@ -15,6 +15,9 @@
 template <std::floating_point R, std::ptrdiff_t NDims>
 class DistributedGrid {
 private:
+    using FaceView = decltype(
+        std::declval<boost::multi::array<R, NDims> &>()(
+            boost::multi::index_range{}, boost::multi::index_range{}));
     std::array<int, NDims> _global_size;
     std::array<int, NDims> _local_size;
     std::array<int, NDims> _local_start;
@@ -31,6 +34,7 @@ private:
         _interior_face_types;
     std::array<std::pair<MPI_Datatype, MPI_Datatype>, NDims>
         _exterior_face_types;
+    std::array<std::pair<FaceView, FaceView>, NDims> _face_views;
 
     auto init_topology() -> void {
         /// Cartesian grid
@@ -144,6 +148,24 @@ private:
                    std::index_sequence<I...>) {
         return _mdarray(boost::multi::index_range{from[I], to[I]}...);
     }
+    auto cache_face_views() -> void {
+        for (auto dim : std::views::iota(0, NDims)) {
+            std::array<int, NDims> from;
+            std::array<int, NDims> to;
+            for (auto odim : std::views::iota(0, NDims)) {
+                from[odim] = 0;
+                to[odim] = (odim == dim) ? 1 : _exterior_size[odim];
+            }
+            _face_views[dim].first =
+                face_view(from, to, std::make_index_sequence<NDims>{});
+            for (auto odim : std::views::iota(0, NDims)) {
+                to[odim] = _exterior_size[odim];
+                from[odim] = (odim == dim) ? _exterior_size[odim] - 1 : 0;
+            }
+            _face_views[dim].second =
+                face_view(from, to, std::make_index_sequence<NDims>{});
+        }
+    }
 
 public:
     DistributedGrid(std::span<int, NDims> size, R default_value) {
@@ -168,6 +190,7 @@ public:
         _mdarray = boost::multi::array<R, NDims>(extents, default_value);
 
         init_transfer_types();
+        cache_face_views();
     }
     ~DistributedGrid() {
         deinit_transfer_types();
@@ -176,6 +199,8 @@ public:
     auto swap(DistributedGrid &other) -> void {
         using std::swap;
         swap(_mdarray, other._mdarray);
+        cache_face_views();
+        other.cache_face_views();
     }
     auto synchronize_halos(const std::array<std::pair<R, R>, NDims> &dirichlet)
         -> void {
@@ -199,16 +224,8 @@ public:
                              0, _cart_comm);
                 }
             } else {
-                // TODO: Cache this view
-                std::array<int, NDims> from;
-                std::array<int, NDims> to;
-                for (auto odim : std::views::iota(0, NDims)) {
-                    from[odim] = 0;
-                    to[odim] = (odim == dim) ? 1 : _exterior_size[odim];
-                }
-                auto face{
-                    face_view(from, to, std::make_index_sequence<NDims>{})};
-                std::ranges::fill(face.elements(), dirichlet[dim].first);
+                std::ranges::fill(_face_views[dim].first.elements(),
+                                  dirichlet[dim].first);
             }
             if (neighbors.second != MPI_PROC_NULL) {
                 if (neighbors.second > _cart_rank) {
@@ -227,17 +244,8 @@ public:
                              0, _cart_comm);
                 }
             } else {
-                // TODO: Cache this view
-                std::array<int, NDims> from;
-                std::array<int, NDims> to;
-                for (auto odim : std::views::iota(0, NDims)) {
-                    to[odim] = _exterior_size[odim];
-                    from[odim] =
-                        (odim == dim) ? _exterior_size[odim] - 1 : 0;
-                }
-                auto face{
-                    face_view(from, to, std::make_index_sequence<NDims>{})};
-                std::ranges::fill(face.elements(), dirichlet[dim].second);
+                std::ranges::fill(_face_views[dim].second.elements(),
+                                  dirichlet[dim].second);
             }
         }
     }

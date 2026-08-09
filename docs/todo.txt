@@ -16,7 +16,7 @@
     [X] File I/O
     [X] Solving
     [X] Exchange
-    [ ] Object Orient
+    [X] Object Orient
     [ ] Persistent Async Requests
 [ ] I/O via HDF5
 [ ] Visualize via ParaView

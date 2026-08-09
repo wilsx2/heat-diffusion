@@ -40,17 +40,17 @@ private:
     const Configuration _constants;
     std::array<int, NDims> _domain_size;
     R _gamma;
-    std::array<int, 2> _local_domain_size;
-    std::array<int, 2> _local_domain_start;
+    std::array<int, NDims> _local_domain_size;
+    std::array<int, NDims> _local_domain_start;
     // Domain Decomposition
-    Structure _curr;
-    Structure _next;
+    Structure _local_domain_curr;
+    Structure _local_domain_next;
     // MPI
     int _world_rank, _world_size;
     MPI_Comm _cart_comm;
-    std::array<int, 2> _cart_coords;
-    std::array<int, 2> _cart_dims;
-    std::array<std::pair<int, int>, 2> _cart_neighbors;
+    std::array<int, NDims> _cart_coords;
+    std::array<int, NDims> _cart_dims;
+    std::array<std::pair<int, int>, NDims> _cart_neighbors;
     int _cart_rank;
     // Storage
     int _saved_count;
@@ -75,19 +75,16 @@ private:
 
         // Write pixels
         // https://wgropp.cs.illinois.edu/courses/cs598-s16/lectures/lecture32.pdf)
-        auto local_cells{static_cast<std::size_t>(_local_domain_size[0]) *
-                         static_cast<std::size_t>(_local_domain_size[1])};
-        std::vector<unsigned char> pixels(
-            local_cells * 3); // WARN: Allocation in hot loop
+        auto [is, js] = _local_domain_curr.extents();
+        auto inner_indices = std::views::cartesian_product(
+            std::views::iota(1, js.size() - 1),
+            std::views::iota(1, is.size() - 1));
+
+        std::vector<unsigned char> pixels(inner_indices.size() *
+                                          3); // WARN: Allocation in hot loop
         std::size_t pixel_i{0};
-        for (auto [y, x] : std::views::cartesian_product(
-                 std::views::iota(_local_domain_start[1],
-                                  _local_domain_start[1] +
-                                      _local_domain_size[1]),
-                 std::views::iota(_local_domain_start[0],
-                                  _local_domain_start[0] +
-                                      _local_domain_size[0]))) {
-            auto value{static_cast<unsigned char>(_curr[x][y])};
+        for (auto [j, i] : inner_indices) {
+            auto value{static_cast<unsigned char>(_local_domain_curr[i][j])};
             pixels[pixel_i++] = value;
             pixels[pixel_i++] = value;
             pixels[pixel_i++] = value;
@@ -101,10 +98,10 @@ private:
         std::array<int, 2> image_local_start{_local_domain_start[1],
                                              _local_domain_start[0] * 3};
         MPI_Datatype subarray;
-        MPI_Type_create_subarray(
-            NDims, image_size.data(), image_local_size.data(),
-            image_local_start.data(), MPI_ORDER_C, MPI_UNSIGNED_CHAR,
-            &subarray);
+        MPI_Type_create_subarray(NDims, image_size.data(),
+                                 image_local_size.data(),
+                                 image_local_start.data(), MPI_ORDER_C,
+                                 MPI_UNSIGNED_CHAR, &subarray);
         MPI_Type_commit(&subarray);
         MPI_File_set_view(fh, header.size(), MPI_UNSIGNED_CHAR, subarray,
                           "native", MPI_INFO_NULL);
@@ -128,11 +125,7 @@ public:
           _gamma(_constants.diffusion_constant *
                  (_constants.time_step /
                   (_constants.space_step * _constants.space_step))),
-          _curr({_constants.domain_width, _constants.domain_height},
-                (_constants.north + _constants.east + _constants.west +
-                 _constants.south) /
-                    4.f),
-          _next(_curr), _saved_count(0) {
+          _saved_count(0) {
         // Set up MPI
         /// World
         MPI_Comm_rank(MPI_COMM_WORLD, &_world_rank);
@@ -182,6 +175,13 @@ public:
         SPDLOG_DEBUG("R{} : {},{} : {}x{}", _cart_rank, _local_domain_start[0],
                      _local_domain_start[1], _local_domain_size[0],
                      _local_domain_size[1]);
+        // Initialize domain (w/ padding for ghost cells)
+        _local_domain_curr =
+            Structure({_local_domain_size[0] + 2, _local_domain_size[1] + 2},
+                      (_constants.north + _constants.south + _constants.east +
+                       _constants.west) /
+                          R{4});
+        _local_domain_next = _local_domain_curr;
     }
     auto run() -> void {
         SPDLOG_TRACE("run()");
@@ -191,44 +191,53 @@ public:
         save();
         while (!converged) {
             SPDLOG_TRACE("Iteration {}", current_iterations);
-            // Boundary Conditions
-            auto [is, js] = _curr.extents();
-
-// NOTE: stl algorithms would very likely be faster
-#pragma omp parallel for
-            for (auto i : is) {
-                _curr[i][0] = _constants.north;
-                _curr[i][js.size() - 1] = _constants.south;
-            }
-
-#pragma omp parallel for
-            for (auto j : js) {
-                _curr[0][j] = _constants.west;
-                _curr[is.size() - 1][j] = _constants.east;
+            // Perform ghost cell exchange / boundary condition checking
+            for (auto dim : std::views::iota(0, NDims)) {
+                auto neighbors{_cart_neighbors[0]};
+                if (neighbors.first != MPI_PROC_NULL) {
+                    // sendrecv
+                } else {
+                    if (dim == 0) {
+                        // cpy east
+                    } else if (dim == 1) {
+                        // cpy west
+                    }
+                }
+                if (neighbors.second != MPI_PROC_NULL) {
+                    // sendrecv
+                } else {
+                    if (dim == 0) {
+                        // cpy north
+                    } else if (dim == 1) {
+                        // cpy south
+                    }
+                }
             }
 
             // Solve
             auto total_norm_delta{R{0}};
+            auto [is, js] = _local_domain_curr.extents();
+            auto inner_indices = std::views::cartesian_product(
+                std::views::iota(1, is.size() - 1),
+                std::views::iota(1, js.size() - 1));
 #pragma omp parallel for reduction(+ : total_norm_delta)
-            for (auto [i, j] : _curr.extents().elements()) {
-                if (i == 0 || i + 1 == is.size() || j == 0 ||
-                    j + 1 == js.size()) {
-                    _next[i][j] = _curr[i][j];
-                    continue;
-                }
-                auto neighbor_sum{_curr[i + 1][j] + _curr[i - 1][j] +
-                                  _curr[i][j + 1] + _curr[i][j - 1]};
+            for (auto [i, j] : inner_indices) {
+                auto neighbor_sum{_local_domain_curr[i + 1][j] +
+                                  _local_domain_curr[i - 1][j] +
+                                  _local_domain_curr[i][j + 1] +
+                                  _local_domain_curr[i][j - 1]};
                 auto delta{_gamma *
-                           (neighbor_sum - static_cast<R>(4) * _curr[i][j])};
-                _next[i][j] = _curr[i][j] + delta;
+                           (neighbor_sum -
+                            static_cast<R>(4) * _local_domain_curr[i][j])};
+                _local_domain_next[i][j] = _local_domain_curr[i][j] + delta;
                 total_norm_delta += delta * delta;
             }
             auto avg_norm_delta{total_norm_delta /
-                                static_cast<R>(_curr.size())};
+                                static_cast<R>(inner_indices.size())};
 
             // Finish up
             using std::swap;
-            swap(_curr, _next);
+            swap(_local_domain_curr, _local_domain_next);
 
             // Save
             if (current_iterations % _constants.storage_interval == 0) {

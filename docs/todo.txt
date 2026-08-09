@@ -13,7 +13,7 @@
 [X] Distribute via OpenMPI
     [X] Un-generalize
     [X] Partition Array (w/ logging)
-    [ ] File I/O
+    [X] File I/O
     [ ] Solving
 [ ] I/O via HDF5
 [ ] Visualize via ParaView

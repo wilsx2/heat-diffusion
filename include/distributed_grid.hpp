@@ -5,6 +5,7 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdlib>
+#include <inplace_vector>
 #include <mpi.h>
 #include <multi/array.hpp>
 #include <ranges>
@@ -15,9 +16,13 @@
 template <std::floating_point R, std::ptrdiff_t NDims>
 class DistributedGrid {
 private:
-    using FaceView = decltype(
-        std::declval<boost::multi::array<R, NDims> &>()(
-            boost::multi::index_range{}, boost::multi::index_range{}));
+    using FaceView = decltype(std::declval<boost::multi::array<R, NDims> &>()(
+        boost::multi::index_range{}, boost::multi::index_range{}));
+    struct Face {
+        FaceView view;
+        int dim;
+        bool is_first;
+    };
     std::array<int, NDims> _global_size;
     std::array<int, NDims> _local_size;
     std::array<int, NDims> _local_start;
@@ -34,7 +39,9 @@ private:
         _interior_face_types;
     std::array<std::pair<MPI_Datatype, MPI_Datatype>, NDims>
         _exterior_face_types;
-    std::array<std::pair<FaceView, FaceView>, NDims> _face_views;
+    std::inplace_vector<Face, NDims * 2> _boundary_faces;
+
+    std::array<MPI_Request, NDims * 4> _requests;
 
     auto init_topology() -> void {
         /// Cartesian grid
@@ -93,7 +100,8 @@ private:
                 if (dim == odim) {
                     exterior_face_starts.first[odim] = 0;
                     interior_face_starts.first[odim] = 1;
-                    exterior_face_starts.second[odim] = _exterior_size[odim] - 1;
+                    exterior_face_starts.second[odim] =
+                        _exterior_size[odim] - 1;
                     interior_face_starts.second[odim] = _local_size[odim];
                     exterior_face_subsizes[odim] = 1;
                     interior_face_subsizes[odim] = 1;
@@ -109,24 +117,20 @@ private:
             }
 
             MPI_Type_create_subarray(
-                NDims, _exterior_size.data(),
-                interior_face_subsizes.data(), interior_face_starts.first.data(),
-                MPI_ORDER_C, element_type,
+                NDims, _exterior_size.data(), interior_face_subsizes.data(),
+                interior_face_starts.first.data(), MPI_ORDER_C, element_type,
                 &_interior_face_types[dim].first);
             MPI_Type_create_subarray(
-                NDims, _exterior_size.data(),
-                interior_face_subsizes.data(), interior_face_starts.second.data(),
-                MPI_ORDER_C, element_type,
+                NDims, _exterior_size.data(), interior_face_subsizes.data(),
+                interior_face_starts.second.data(), MPI_ORDER_C, element_type,
                 &_interior_face_types[dim].second);
             MPI_Type_create_subarray(
-                NDims, _exterior_size.data(),
-                exterior_face_subsizes.data(), exterior_face_starts.first.data(),
-                MPI_ORDER_C, element_type,
+                NDims, _exterior_size.data(), exterior_face_subsizes.data(),
+                exterior_face_starts.first.data(), MPI_ORDER_C, element_type,
                 &_exterior_face_types[dim].first);
             MPI_Type_create_subarray(
-                NDims, _exterior_size.data(),
-                exterior_face_subsizes.data(), exterior_face_starts.second.data(),
-                MPI_ORDER_C, element_type,
+                NDims, _exterior_size.data(), exterior_face_subsizes.data(),
+                exterior_face_starts.second.data(), MPI_ORDER_C, element_type,
                 &_exterior_face_types[dim].second);
 
             MPI_Type_commit(&_interior_face_types[dim].first);
@@ -143,31 +147,65 @@ private:
             MPI_Type_free(&_exterior_face_types[dim].second);
         }
     }
+    auto init_requests() -> void {
+        for (auto dim : std::views::iota(0, NDims)) {
+            auto neighbors{_cart_neighbors[dim]};
+
+            MPI_Send_init(_mdarray.base(), 1, _interior_face_types[dim].first,
+                          neighbors.first, 0, _cart_comm,
+                          _requests.data() + dim * 4 + 0);
+            MPI_Recv_init(_mdarray.base(), 1, _exterior_face_types[dim].first,
+                          neighbors.first, 1, _cart_comm,
+                          _requests.data() + dim * 4 + 1);
+            MPI_Recv_init(_mdarray.base(), 1, _exterior_face_types[dim].second,
+                          neighbors.second, 0, _cart_comm,
+                          _requests.data() + dim * 4 + 2);
+            MPI_Send_init(_mdarray.base(), 1, _interior_face_types[dim].second,
+                          neighbors.second, 1, _cart_comm,
+                          _requests.data() + dim * 4 + 3);
+        }
+    }
+    auto deinit_requests() -> void {
+        for (auto &request : _requests) {
+            MPI_Request_free(&request);
+        }
+    }
     template <std::size_t... I>
     auto face_view(std::array<int, NDims> from, std::array<int, NDims> to,
                    std::index_sequence<I...>) {
         return _mdarray(boost::multi::index_range{from[I], to[I]}...);
     }
-    auto cache_face_views() -> void {
+    auto set_boundary_faces() -> void {
+        _boundary_faces.clear();
         for (auto dim : std::views::iota(0, NDims)) {
             std::array<int, NDims> from;
             std::array<int, NDims> to;
-            for (auto odim : std::views::iota(0, NDims)) {
-                from[odim] = 0;
-                to[odim] = (odim == dim) ? 1 : _exterior_size[odim];
+            if (_cart_neighbors[dim].first == MPI_PROC_NULL) {
+                for (auto odim : std::views::iota(0, NDims)) {
+                    from[odim] = 0;
+                    to[odim] = (odim == dim) ? 1 : _exterior_size[odim];
+                }
+                _boundary_faces.push_back(
+                    {face_view(from, to, std::make_index_sequence<NDims>{}),
+                     dim, true});
             }
-            _face_views[dim].first =
-                face_view(from, to, std::make_index_sequence<NDims>{});
-            for (auto odim : std::views::iota(0, NDims)) {
-                to[odim] = _exterior_size[odim];
-                from[odim] = (odim == dim) ? _exterior_size[odim] - 1 : 0;
+            if (_cart_neighbors[dim].second == MPI_PROC_NULL) {
+                for (auto odim : std::views::iota(0, NDims)) {
+                    to[odim] = _exterior_size[odim];
+                    from[odim] = (odim == dim) ? _exterior_size[odim] - 1 : 0;
+                }
+                _boundary_faces.push_back(
+                    {face_view(from, to, std::make_index_sequence<NDims>{}),
+                     dim, false});
             }
-            _face_views[dim].second =
-                face_view(from, to, std::make_index_sequence<NDims>{});
         }
     }
 
 public:
+    DistributedGrid(const DistributedGrid &) = delete;
+    DistributedGrid &operator=(const DistributedGrid &) = delete;
+    DistributedGrid(DistributedGrid &&) = delete;
+    DistributedGrid &operator=(DistributedGrid &&) = delete;
     DistributedGrid(std::span<int, NDims> size, R default_value) {
         MPI_Comm_rank(MPI_COMM_WORLD, &_world_rank);
         MPI_Comm_size(MPI_COMM_WORLD, &_world_size);
@@ -190,63 +228,24 @@ public:
         _mdarray = boost::multi::array<R, NDims>(extents, default_value);
 
         init_transfer_types();
-        cache_face_views();
+        set_boundary_faces();
+        init_requests();
     }
     ~DistributedGrid() {
         deinit_transfer_types();
+        deinit_requests();
         MPI_Comm_free(&_cart_comm);
-    }
-    auto swap(DistributedGrid &other) -> void {
-        using std::swap;
-        swap(_mdarray, other._mdarray);
-        cache_face_views();
-        other.cache_face_views();
     }
     auto synchronize_halos(const std::array<std::pair<R, R>, NDims> &dirichlet)
         -> void {
-        for (auto dim : std::views::iota(0, NDims)) {
-            auto neighbors{_cart_neighbors[dim]};
+        MPI_Startall(_requests.size(), _requests.data());
+        std::array<MPI_Status, _requests.size()> statuses;
+        MPI_Waitall(_requests.size(), _requests.data(), statuses.data());
 
-            if (neighbors.first != MPI_PROC_NULL) {
-                if (neighbors.first > _cart_rank) {
-                    MPI_Send(_mdarray.base(), 1,
-                             _interior_face_types[dim].first, neighbors.first,
-                             0, _cart_comm);
-                    MPI_Recv(_mdarray.base(), 1,
-                             _exterior_face_types[dim].first, neighbors.first,
-                             0, _cart_comm, MPI_STATUS_IGNORE);
-                } else {
-                    MPI_Recv(_mdarray.base(), 1,
-                             _exterior_face_types[dim].first, neighbors.first,
-                             0, _cart_comm, MPI_STATUS_IGNORE);
-                    MPI_Send(_mdarray.base(), 1,
-                             _interior_face_types[dim].first, neighbors.first,
-                             0, _cart_comm);
-                }
-            } else {
-                std::ranges::fill(_face_views[dim].first.elements(),
-                                  dirichlet[dim].first);
-            }
-            if (neighbors.second != MPI_PROC_NULL) {
-                if (neighbors.second > _cart_rank) {
-                    MPI_Send(_mdarray.base(), 1,
-                             _interior_face_types[dim].second, neighbors.second,
-                             0, _cart_comm);
-                    MPI_Recv(_mdarray.base(), 1,
-                             _exterior_face_types[dim].second, neighbors.second,
-                             0, _cart_comm, MPI_STATUS_IGNORE);
-                } else {
-                    MPI_Recv(_mdarray.base(), 1,
-                             _exterior_face_types[dim].second, neighbors.second,
-                             0, _cart_comm, MPI_STATUS_IGNORE);
-                    MPI_Send(_mdarray.base(), 1,
-                             _interior_face_types[dim].second, neighbors.second,
-                             0, _cart_comm);
-                }
-            } else {
-                std::ranges::fill(_face_views[dim].second.elements(),
-                                  dirichlet[dim].second);
-            }
+        for (auto& face : _boundary_faces) {
+            auto value{face.is_first ? dirichlet[face.dim].first
+                                     : dirichlet[face.dim].second};
+            std::ranges::fill(face.view.elements(), value);
         }
     }
     auto inner_coordinates() const {

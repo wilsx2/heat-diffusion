@@ -17,7 +17,7 @@
     [X] Solving
     [X] Exchange
     [X] Object Orient
-    [ ] Persistent Async Requests
+    [X] Persistent Async Requests
 [ ] I/O via HDF5
 [ ] Visualize via ParaView
 [ ] Performance monitoring

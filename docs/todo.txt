@@ -14,7 +14,10 @@
     [X] Un-generalize
     [X] Partition Array (w/ logging)
     [X] File I/O
-    [ ] Solving
+    [X] Solving
+    [ ] Exchange
+    [ ] Object Orient
+    [ ] Persistent Async Requests
 [ ] I/O via HDF5
 [ ] Visualize via ParaView
 [ ] Performance monitoring

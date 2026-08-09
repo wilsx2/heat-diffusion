@@ -39,6 +39,7 @@ private:
     using Structure = boost::multi::array<R, NDims>;
     const Configuration _constants;
     std::array<int, NDims> _domain_size;
+    std::array<std::pair<float, float>, NDims> _dirichlet_boundary_conditions;
     R _gamma;
     std::array<int, NDims> _local_domain_size;
     std::array<int, NDims> _local_domain_start;
@@ -76,9 +77,9 @@ private:
         // Write pixels
         // https://wgropp.cs.illinois.edu/courses/cs598-s16/lectures/lecture32.pdf)
         auto [is, js] = _local_domain_curr.extents();
-        auto inner_indices = std::views::cartesian_product(
-            std::views::iota(1, js.size() - 1),
-            std::views::iota(1, is.size() - 1));
+        auto inner_indices =
+            std::views::cartesian_product(std::views::iota(1, js.size() - 1),
+                                          std::views::iota(1, is.size() - 1));
 
         std::vector<unsigned char> pixels(inner_indices.size() *
                                           3); // WARN: Allocation in hot loop
@@ -121,7 +122,11 @@ public:
     SpmdFdm2dExplicitHeatEqSolver() = delete;
     SpmdFdm2dExplicitHeatEqSolver(Configuration &&config)
         : _constants(config),
-          _domain_size{_constants.domain_width, _constants.domain_height},
+          _domain_size{static_cast<int>(_constants.domain_width),
+                       static_cast<int>(_constants.domain_height)},
+          _dirichlet_boundary_conditions{
+              {{_constants.east, _constants.west},
+               {_constants.north, _constants.south}}}, // NOTE: Guessing
           _gamma(_constants.diffusion_constant *
                  (_constants.time_step /
                   (_constants.space_step * _constants.space_step))),
@@ -189,28 +194,123 @@ public:
         auto converged{false};
 
         save();
+
+        // Create types for exchanges
+        std::array<std::pair<MPI_Datatype, MPI_Datatype>, NDims>
+            interior_face_types;
+        std::array<std::pair<MPI_Datatype, MPI_Datatype>, NDims>
+            exterior_face_types;
+
+        auto interior_size{_local_domain_size};
+        std::array<int, NDims> exterior_size{interior_size[0] + 2,
+                                             interior_size[1] + 2};
+        for (auto dim : std::views::iota(0, NDims)) {
+            std::array<int, NDims> interior_face_subsizes;
+            std::array<int, NDims> exterior_face_subsizes;
+            std::pair<std::array<int, NDims>, std::array<int, NDims>>
+                interior_face_starts;
+            std::pair<std::array<int, NDims>, std::array<int, NDims>>
+                exterior_face_starts;
+            for (auto odim : std::views::iota(0, NDims)) {
+                // NOTE: May be improved with a disjoint fill and assignment at [dim]
+                if (dim == odim) {
+                    exterior_face_starts.first[odim] = 0;
+                    interior_face_starts.first[odim] = 1;
+                    exterior_face_starts.second[odim] = exterior_size[odim] - 1;
+                    interior_face_starts.second[odim] = interior_size[odim];
+                    exterior_face_subsizes[odim] = 1;
+                    interior_face_subsizes[odim] = 1;
+                } else {
+                    // Only interior cells are exchanged, corners are excluded
+                    exterior_face_starts.first[odim] = 1;
+                    interior_face_starts.first[odim] = 1;
+                    exterior_face_starts.second[odim] = 1;
+                    interior_face_starts.second[odim] = 1;
+                    exterior_face_subsizes[odim] = interior_size[odim];
+                    interior_face_subsizes[odim] = interior_size[odim];
+                }
+            }
+
+            MPI_Type_create_subarray(
+                NDims, exterior_size.data(), interior_face_subsizes.data(),
+                interior_face_starts.first.data(), MPI_ORDER_C, MPI_FLOAT,
+                &interior_face_types[dim].first); // WARN: May be MPI_DOUBLE
+            MPI_Type_create_subarray(
+                NDims, exterior_size.data(), interior_face_subsizes.data(),
+                interior_face_starts.second.data(), MPI_ORDER_C, MPI_FLOAT,
+                &interior_face_types[dim].second); // WARN: May be MPI_DOUBLE
+            MPI_Type_create_subarray(
+                NDims, exterior_size.data(), exterior_face_subsizes.data(),
+                exterior_face_starts.first.data(), MPI_ORDER_C, MPI_FLOAT,
+                &exterior_face_types[dim].first); // WARN: May be MPI_DOUBLE
+            MPI_Type_create_subarray(
+                NDims, exterior_size.data(), exterior_face_subsizes.data(),
+                exterior_face_starts.second.data(), MPI_ORDER_C, MPI_FLOAT,
+                &exterior_face_types[dim].second); // WARN: May be MPI_DOUBLE
+
+            MPI_Type_commit(&interior_face_types[dim].first);
+            MPI_Type_commit(&exterior_face_types[dim].first);
+            MPI_Type_commit(&interior_face_types[dim].second);
+            MPI_Type_commit(&exterior_face_types[dim].second);
+        }
+
+        // Perform simulation
         while (!converged) {
             SPDLOG_TRACE("Iteration {}", current_iterations);
-            // Perform ghost cell exchange / boundary condition checking
+
+            // Conditionally perform halo exchange / apply boundary condition
             for (auto dim : std::views::iota(0, NDims)) {
-                auto neighbors{_cart_neighbors[0]};
+                auto neighbors{_cart_neighbors[dim]};
+
                 if (neighbors.first != MPI_PROC_NULL) {
                     // sendrecv
-                } else {
-                    if (dim == 0) {
-                        // cpy east
-                    } else if (dim == 1) {
-                        // cpy west
+                    if (neighbors.first > _cart_rank) {
+                        MPI_Send(_local_domain_curr.base(), 1, interior_face_types[dim].first, neighbors.first, 0, _cart_comm);
+                        MPI_Recv(_local_domain_curr.base(), 1, exterior_face_types[dim].first, neighbors.first, 0, _cart_comm, MPI_STATUS_IGNORE);
+                    } else {
+                        MPI_Recv(_local_domain_curr.base(), 1, exterior_face_types[dim].first, neighbors.first, 0, _cart_comm, MPI_STATUS_IGNORE);
+                        MPI_Send(_local_domain_curr.base(), 1, interior_face_types[dim].first, neighbors.first, 0, _cart_comm);
                     }
+                } else {
+                    // TODO: Cache this view
+                    std::array<int, NDims> from;
+                    std::array<int, NDims> to;
+                    // NOTE: May be improved with a disjoint fill and assignment at [dim]
+                    for (auto odim : std::views::iota(0, NDims)) {
+                        from[odim] = 0;
+                        to[odim] =
+                            (odim == dim) ? 1 : exterior_size[odim];
+                    }
+                    auto face =
+                        _local_domain_curr(boost::multi::index_range{from[0], to[0]},
+                                           boost::multi::index_range{from[1], to[1]})
+                            .elements();
+                    std::ranges::fill(face, _dirichlet_boundary_conditions[dim].first);
                 }
                 if (neighbors.second != MPI_PROC_NULL) {
                     // sendrecv
-                } else {
-                    if (dim == 0) {
-                        // cpy north
-                    } else if (dim == 1) {
-                        // cpy south
+                    if (neighbors.second > _cart_rank) {
+                        MPI_Send(_local_domain_curr.base(), 1, interior_face_types[dim].second, neighbors.second, 0, _cart_comm);
+                        MPI_Recv(_local_domain_curr.base(), 1, exterior_face_types[dim].second, neighbors.second, 0, _cart_comm, MPI_STATUS_IGNORE);
+                    } else {
+                        MPI_Recv(_local_domain_curr.base(), 1, exterior_face_types[dim].second, neighbors.second, 0, _cart_comm, MPI_STATUS_IGNORE);
+                        MPI_Send(_local_domain_curr.base(), 1, interior_face_types[dim].second, neighbors.second, 0, _cart_comm);
                     }
+                } else {
+                    // TODO: Cache this view
+                    std::array<int, NDims> from;
+                    std::array<int, NDims> to;
+                    // NOTE: May be improved with a disjoint fill and assignment at [dim]
+                    for (auto odim : std::views::iota(0, NDims)) {
+                        to[odim] = exterior_size[odim];
+                        from[odim] =
+                            (odim == dim) ? exterior_size[odim] - 1 : 0;
+                    }
+                    auto face =
+                        _local_domain_curr(boost::multi::index_range{from[0], to[0]},
+                                           boost::multi::index_range{from[1], to[1]})
+                            .elements();
+                    std::ranges::fill(face, _dirichlet_boundary_conditions[dim].second);
                 }
             }
 
@@ -250,5 +350,13 @@ public:
             ++current_iterations;
         }
         save();
+
+        // Free types
+        for (auto dim : std::views::iota(0, NDims)) {
+            MPI_Type_free(&interior_face_types[dim].first);
+            MPI_Type_free(&exterior_face_types[dim].first);
+            MPI_Type_free(&interior_face_types[dim].second);
+            MPI_Type_free(&exterior_face_types[dim].second);
+        }
     }
 };

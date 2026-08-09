@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <mpi.h>
 #include <multi/array.hpp>
+#include <ranges>
 #include <spdlog/spdlog.h>
 
 #include <concepts>
@@ -37,7 +38,10 @@ private:
     static constexpr std::ptrdiff_t NDims = 2;
     using Structure = boost::multi::array<R, NDims>;
     const Configuration _constants;
+    std::array<int, NDims> _domain_size;
     R _gamma;
+    std::array<int, 2> _local_domain_size;
+    std::array<int, 2> _local_domain_start;
     // Domain Decomposition
     Structure _curr;
     Structure _next;
@@ -49,9 +53,69 @@ private:
     std::array<std::pair<int, int>, 2> _cart_neighbors;
     int _cart_rank;
     // Storage
-    PersistentStorage<PPM> _storage;
+    int _saved_count;
 
-    auto save() -> void {}
+    auto save() -> void {
+        MPI_File fh;
+        auto filename{std::format("state_{}.ppm", _saved_count++)};
+        MPI_File_open(_cart_comm, filename.c_str(),
+                      MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
+        // TODO: Check open status
+
+        // Write header
+        auto max_value{static_cast<unsigned>(
+            std::max({_constants.north, _constants.south, _constants.east,
+                      _constants.west}))}; // NOTE: Can be cached
+        auto header{std::format("P6\n{} {}\n{}\n", _constants.domain_width,
+                                _constants.domain_height, max_value)};
+        if (_world_rank == 0) {
+            MPI_File_write(fh, header.c_str(), header.size(), MPI_CHAR,
+                           MPI_STATUS_IGNORE);
+        }
+
+        // Write pixels
+        // https://wgropp.cs.illinois.edu/courses/cs598-s16/lectures/lecture32.pdf)
+        auto local_cells{static_cast<std::size_t>(_local_domain_size[0]) *
+                         static_cast<std::size_t>(_local_domain_size[1])};
+        std::vector<unsigned char> pixels(
+            local_cells * 3); // WARN: Allocation in hot loop
+        std::size_t pixel_i{0};
+        for (auto [y, x] : std::views::cartesian_product(
+                 std::views::iota(_local_domain_start[1],
+                                  _local_domain_start[1] +
+                                      _local_domain_size[1]),
+                 std::views::iota(_local_domain_start[0],
+                                  _local_domain_start[0] +
+                                      _local_domain_size[0]))) {
+            auto value{static_cast<unsigned char>(_curr[x][y])};
+            pixels[pixel_i++] = value;
+            pixels[pixel_i++] = value;
+            pixels[pixel_i++] = value;
+        }
+
+        std::array<int, 2> image_size{
+            static_cast<int>(_constants.domain_height),
+            static_cast<int>(_constants.domain_width) * 3};
+        std::array<int, 2> image_local_size{_local_domain_size[1],
+                                            _local_domain_size[0] * 3};
+        std::array<int, 2> image_local_start{_local_domain_start[1],
+                                             _local_domain_start[0] * 3};
+        MPI_Datatype subarray;
+        MPI_Type_create_subarray(
+            NDims, image_size.data(), image_local_size.data(),
+            image_local_start.data(), MPI_ORDER_C, MPI_UNSIGNED_CHAR,
+            &subarray);
+        MPI_Type_commit(&subarray);
+        MPI_File_set_view(fh, header.size(), MPI_UNSIGNED_CHAR, subarray,
+                          "native", MPI_INFO_NULL);
+
+        MPI_Barrier(_cart_comm);
+        MPI_File_write_all(fh, pixels.data(), pixels.size(), MPI_UNSIGNED_CHAR,
+                           MPI_STATUS_IGNORE);
+
+        MPI_Type_free(&subarray);
+        MPI_File_close(&fh);
+    }
     auto apply_boundary_conditions() -> void {
         SPDLOG_TRACE("apply_boundary_conditions()");
     }
@@ -60,6 +124,7 @@ public:
     SpmdFdm2dExplicitHeatEqSolver() = delete;
     SpmdFdm2dExplicitHeatEqSolver(Configuration &&config)
         : _constants(config),
+          _domain_size{_constants.domain_width, _constants.domain_height},
           _gamma(_constants.diffusion_constant *
                  (_constants.time_step /
                   (_constants.space_step * _constants.space_step))),
@@ -67,9 +132,7 @@ public:
                 (_constants.north + _constants.east + _constants.west +
                  _constants.south) /
                     4.f),
-          _next(_curr), _storage(PPM(static_cast<unsigned>(
-                            std::max({_constants.north, _constants.south,
-                                      _constants.east, _constants.west})))) {
+          _next(_curr), _saved_count(0) {
         // Set up MPI
         /// World
         MPI_Comm_rank(MPI_COMM_WORLD, &_world_rank);
@@ -85,6 +148,7 @@ public:
             periods[id] = 0;
         MPI_Cart_create(MPI_COMM_WORLD, NDims, _cart_dims.data(), periods, 0,
                         &_cart_comm);
+        free(periods);
 
         if (_cart_comm == MPI_COMM_NULL) {
             SPDLOG_CRITICAL("Process {} not included in Cartesian communicator",
@@ -107,28 +171,24 @@ public:
         }
 
         // Initialize local grid
-        std::array<int, NDims> domain_size{_constants.domain_width,
-                                           _constants.domain_height};
-        std::array<int, NDims> local_domain_coords;
-        std::array<int, NDims> local_domain_size;
         for (auto dim : std::views::iota(0, NDims)) {
-            auto unit_size{std::floor(domain_size[dim] / _cart_dims[dim])};
-            local_domain_coords[dim] = _cart_coords[dim] * unit_size;
-            local_domain_size[dim] =
+            auto unit_size{std::floor(_domain_size[dim] / _cart_dims[dim])};
+            _local_domain_start[dim] = _cart_coords[dim] * unit_size;
+            _local_domain_size[dim] =
                 (_cart_coords[dim] < _cart_dims[dim] - 1)
                     ? unit_size
-                    : domain_size[dim] - local_domain_coords[dim];
+                    : _domain_size[dim] - _local_domain_start[dim];
         }
-        SPDLOG_DEBUG("R{} : {},{} : {}x{}", _cart_rank, local_domain_coords[0],
-                     local_domain_coords[1], local_domain_size[0],
-                     local_domain_size[1]);
+        SPDLOG_DEBUG("R{} : {},{} : {}x{}", _cart_rank, _local_domain_start[0],
+                     _local_domain_start[1], _local_domain_size[0],
+                     _local_domain_size[1]);
     }
     auto run() -> void {
         SPDLOG_TRACE("run()");
         auto current_iterations{0u};
         auto converged{false};
 
-        _storage(_curr);
+        save();
         while (!converged) {
             SPDLOG_TRACE("Iteration {}", current_iterations);
             // Boundary Conditions
@@ -151,6 +211,11 @@ public:
             auto total_norm_delta{R{0}};
 #pragma omp parallel for reduction(+ : total_norm_delta)
             for (auto [i, j] : _curr.extents().elements()) {
+                if (i == 0 || i + 1 == is.size() || j == 0 ||
+                    j + 1 == js.size()) {
+                    _next[i][j] = _curr[i][j];
+                    continue;
+                }
                 auto neighbor_sum{_curr[i + 1][j] + _curr[i - 1][j] +
                                   _curr[i][j + 1] + _curr[i][j - 1]};
                 auto delta{_gamma *
@@ -167,7 +232,7 @@ public:
 
             // Save
             if (current_iterations % _constants.storage_interval == 0) {
-                _storage(_curr);
+                save();
             }
 
             // Check convergence
@@ -175,6 +240,6 @@ public:
                         current_iterations >= _constants.max_iterations;
             ++current_iterations;
         }
-        _storage(_curr);
+        save();
     }
 };

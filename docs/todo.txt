@@ -10,15 +10,19 @@
 [X] spdlog
 [X] Validate physical validity
 [X] Parallel via OpenMP
+[X] Distribute via OpenMPI
+    [X] Un-generalize
+    [X] Partition Array (w/ logging)
+    [ ] File I/O
+    [ ] Solving
 [ ] I/O via HDF5
-[ ] Distribute via OpenMPI
 [ ] Visualize via ParaView
 [ ] Performance monitoring
 
-[ ] Combine steps
-[ ] Implicit Method
+[ ] Implicit Method (PETSc?)
 [ ] Generic input file parser
-[ ] Other FDM Boundary Conditions
-[ ] Make N-Dimensional
+[ ] Other Boundary Conditions
+[ ] ? Other Convergence Conditions
+[ ] N-Dimensional
 [ ] FEM
 [ ] FEM Boundary Conditions

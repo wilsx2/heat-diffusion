@@ -33,14 +33,20 @@ public:
     };
 
 private:
-    using Topology = boost::multi::array<R, 2>;
+    static constexpr std::ptrdiff_t NDims = 2;
+    using Structure = boost::multi::array<R, NDims>;
     const Configuration _constants;
     R _gamma;
     // Domain Decomposition
-    Topology _curr;
-    Topology _next;
+    Structure _curr;
+    Structure _next;
     // MPI
-    int _rank, _world_size;
+    int _world_rank, _world_size;
+    MPI_Comm _cart_comm;
+    std::array<int, 2> _cart_coords;
+    std::array<int, 2> _cart_dims;
+    std::array<std::pair<int, int>, 2> _cart_neighbors;
+    int _cart_rank;
     // Storage
     PersistentStorage<PPM> _storage;
 
@@ -63,10 +69,44 @@ public:
           _next(_curr), _storage(PPM(static_cast<unsigned>(
                             std::max({_constants.north, _constants.south,
                                       _constants.east, _constants.west})))) {
-        MPI_Comm_rank(MPI_COMM_WORLD, &_rank);
+        // Set up MPI
+        /// World
+        MPI_Comm_rank(MPI_COMM_WORLD, &_world_rank);
         MPI_Comm_size(MPI_COMM_WORLD, &_world_size);
+        SPDLOG_DEBUG("Process {}/{} (rank {})", _world_rank + 1, _world_size,
+                     _world_rank);
 
-        spdlog::debug("Process {}/{} (rank {})", _rank + 1, _world_size, _rank);
+        /// Cartesian grid
+        std::fill(_cart_dims.begin(), _cart_dims.end(), 0);
+        MPI_Dims_create(_world_size, 2, _cart_dims.data());
+        int *periods = (int *)malloc(NDims * sizeof(int));
+        for (int id = 0; id < NDims; id++)
+            periods[id] = 0;
+        MPI_Cart_create(MPI_COMM_WORLD, NDims, _cart_dims.data(), periods, 0,
+                        &_cart_comm);
+
+        if (_cart_comm == MPI_COMM_NULL) {
+            SPDLOG_WARN("Process {} not included in Cartesian communicator",
+                        _world_rank);
+        } else {
+            /// Find coordinates
+            MPI_Cart_coords(_cart_comm, _world_rank, NDims,
+                            _cart_coords.data());
+            MPI_Cart_rank(_cart_comm, _cart_coords.data(), &_cart_rank);
+            SPDLOG_DEBUG("I am {}: ({},{}); originally {}", _cart_rank,
+                         _cart_coords[0], _cart_coords[1], _world_rank);
+
+            /// Find neighbors
+            for (auto dim : std::views::iota(0, NDims)) {
+                MPI_Cart_shift(_cart_comm, dim, 1, &_cart_neighbors[dim].first,
+                               &_cart_neighbors[dim].second);
+                SPDLOG_DEBUG("I am {}, my neighbors in dim {} are {} and {}",
+                             _cart_rank, dim, _cart_neighbors[dim].first,
+                             _cart_neighbors[dim].second);
+            }
+        }
+
+        // Initialize local grid
     }
     auto run() -> void {
         SPDLOG_TRACE("run()");
@@ -106,7 +146,7 @@ public:
             auto avg_norm_delta{total_norm_delta /
                                 static_cast<R>(_curr.size())};
 
-            //
+            // Finish up
             using std::swap;
             swap(_curr, _next);
 

@@ -3,6 +3,7 @@
 #include "serialization.hpp"
 #include "storage.hpp"
 
+#include <cstdlib>
 #include <mpi.h>
 #include <multi/array.hpp>
 #include <spdlog/spdlog.h>
@@ -86,27 +87,41 @@ public:
                         &_cart_comm);
 
         if (_cart_comm == MPI_COMM_NULL) {
-            SPDLOG_WARN("Process {} not included in Cartesian communicator",
-                        _world_rank);
-        } else {
-            /// Find coordinates
-            MPI_Cart_coords(_cart_comm, _world_rank, NDims,
-                            _cart_coords.data());
-            MPI_Cart_rank(_cart_comm, _cart_coords.data(), &_cart_rank);
-            SPDLOG_DEBUG("I am {}: ({},{}); originally {}", _cart_rank,
-                         _cart_coords[0], _cart_coords[1], _world_rank);
+            SPDLOG_CRITICAL("Process {} not included in Cartesian communicator",
+                            _world_rank);
+            std::exit(EXIT_FAILURE);
+        }
+        /// Find coordinates
+        MPI_Cart_coords(_cart_comm, _world_rank, NDims, _cart_coords.data());
+        MPI_Cart_rank(_cart_comm, _cart_coords.data(), &_cart_rank);
+        SPDLOG_DEBUG("R{}: ({},{}); originally {}", _cart_rank, _cart_coords[0],
+                     _cart_coords[1], _world_rank);
 
-            /// Find neighbors
-            for (auto dim : std::views::iota(0, NDims)) {
-                MPI_Cart_shift(_cart_comm, dim, 1, &_cart_neighbors[dim].first,
-                               &_cart_neighbors[dim].second);
-                SPDLOG_DEBUG("I am {}, my neighbors in dim {} are {} and {}",
-                             _cart_rank, dim, _cart_neighbors[dim].first,
-                             _cart_neighbors[dim].second);
-            }
+        /// Find neighbors
+        for (auto dim : std::views::iota(0, NDims)) {
+            MPI_Cart_shift(_cart_comm, dim, 1, &_cart_neighbors[dim].first,
+                           &_cart_neighbors[dim].second);
+            SPDLOG_DEBUG("R{}, my neighbors in dim {} are {} and {}",
+                         _cart_rank, dim, _cart_neighbors[dim].first,
+                         _cart_neighbors[dim].second);
         }
 
         // Initialize local grid
+        std::array<int, NDims> domain_size{_constants.domain_width,
+                                           _constants.domain_height};
+        std::array<int, NDims> local_domain_coords;
+        std::array<int, NDims> local_domain_size;
+        for (auto dim : std::views::iota(0, NDims)) {
+            auto unit_size{std::floor(domain_size[dim] / _cart_dims[dim])};
+            local_domain_coords[dim] = _cart_coords[dim] * unit_size;
+            local_domain_size[dim] =
+                (_cart_coords[dim] < _cart_dims[dim] - 1)
+                    ? unit_size
+                    : domain_size[dim] - local_domain_coords[dim];
+        }
+        SPDLOG_DEBUG("R{} : {},{} : {}x{}", _cart_rank, local_domain_coords[0],
+                     local_domain_coords[1], local_domain_size[0],
+                     local_domain_size[1]);
     }
     auto run() -> void {
         SPDLOG_TRACE("run()");

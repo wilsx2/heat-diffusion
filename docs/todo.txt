@@ -22,10 +22,12 @@
 [ ] Visualize via ParaView
 [ ] Performance monitoring
 
-[ ] Implicit Method (PETSc?)
-[ ] Generic input file parser
-[ ] Other Boundary Conditions
-[ ] ? Other Convergence Conditions
 [ ] N-Dimensional
+[ ] Neumann Boundary Condition
+[ ] Input file parser
+[ ] Arithmetic Expression Initial Conditions
+[ ] Arithmetic Expression Boundary Condition
+[ ] ? Other Convergence Conditions
+[ ] Implicit Method (PETSc?)
 [ ] FEM
 [ ] FEM Boundary Conditions

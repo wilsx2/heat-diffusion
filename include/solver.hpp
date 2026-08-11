@@ -49,65 +49,8 @@ private:
     bool current_grid;
 
     auto save() -> void {
-        MPI_File fh;
-        auto filename{std::format("state_{}.ppm", _saved_count++)};
-        MPI_File_open(double_grid[current_grid].comm(), filename.c_str(),
-                      MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
-        // TODO: Check open status
-
-        // Write header
-        auto max_value{static_cast<unsigned>(
-            std::max({_constants.north, _constants.south, _constants.east,
-                      _constants.west}))}; // NOTE: Can be cached
-        auto header{std::format("P6\n{} {}\n{}\n", _constants.domain_width,
-                                _constants.domain_height, max_value)};
-        if (double_grid[current_grid].world_rank() == 0) {
-            MPI_File_write(fh, header.c_str(), header.size(), MPI_CHAR,
-                           MPI_STATUS_IGNORE);
-        }
-
-        // Write pixels
-        // https://wgropp.cs.illinois.edu/courses/cs598-s16/lectures/lecture32.pdf)
-        auto &curr{double_grid[current_grid].local_grid()};
-        auto [is, js] = curr.extents();
-        auto inner_indices =
-            std::views::cartesian_product(std::views::iota(1, js.size() - 1),
-                                          std::views::iota(1, is.size() - 1));
-
-        std::vector<unsigned char> pixels(inner_indices.size() *
-                                          3); // WARN: Allocation in hot loop
-        std::size_t pixel_i{0};
-        for (auto [j, i] : inner_indices) {
-            auto value{static_cast<unsigned char>(curr[i][j])};
-            pixels[pixel_i++] = value;
-            pixels[pixel_i++] = value;
-            pixels[pixel_i++] = value;
-        }
-
-        std::array<int, 2> image_size{
-            static_cast<int>(_constants.domain_height),
-            static_cast<int>(_constants.domain_width) * 3};
-        std::array<int, 2> image_local_size{
-            double_grid[current_grid].local_size()[1],
-            double_grid[current_grid].local_size()[0] * 3};
-        std::array<int, 2> image_local_start{
-            double_grid[current_grid].local_start()[1],
-            double_grid[current_grid].local_start()[0] * 3};
-        MPI_Datatype subarray;
-        MPI_Type_create_subarray(NDims, image_size.data(),
-                                 image_local_size.data(),
-                                 image_local_start.data(), MPI_ORDER_C,
-                                 MPI_UNSIGNED_CHAR, &subarray);
-        MPI_Type_commit(&subarray);
-        MPI_File_set_view(fh, header.size(), MPI_UNSIGNED_CHAR, subarray,
-                          "native", MPI_INFO_NULL);
-
-        MPI_Barrier(double_grid[current_grid].comm());
-        MPI_File_write_all(fh, pixels.data(), pixels.size(), MPI_UNSIGNED_CHAR,
-                           MPI_STATUS_IGNORE);
-
-        MPI_Type_free(&subarray);
-        MPI_File_close(&fh);
+        auto filename{std::format("state_{}", _saved_count++)};
+        double_grid[current_grid].save_to_h5(filename);
     }
 
 public:

@@ -1,10 +1,14 @@
 #pragma once
 
+#include "h5raii.hpp"
+#include <H5Fpublic.h>
+#include <H5Ppublic.h>
 #include <algorithm>
 #include <array>
 #include <concepts>
 #include <cstddef>
 #include <cstdlib>
+#include <hdf5.h>
 #include <inplace_vector>
 #include <mpi.h>
 #include <multi/array.hpp>
@@ -242,7 +246,7 @@ public:
         std::array<MPI_Status, _requests.size()> statuses;
         MPI_Waitall(_requests.size(), _requests.data(), statuses.data());
 
-        for (auto& face : _boundary_faces) {
+        for (auto &face : _boundary_faces) {
             auto value{face.is_first ? dirichlet[face.dim].first
                                      : dirichlet[face.dim].second};
             std::ranges::fill(face.view.elements(), value);
@@ -266,4 +270,64 @@ public:
     }
     auto comm() const -> MPI_Comm { return _cart_comm; }
     auto world_rank() const -> int { return _world_rank; }
+    auto save_to_h5(std::string_view name) {
+        // https://cvw.cac.cornell.edu/parallel-io-libraries/phdf5/file-operations
+
+        // Set up file
+        auto plist{H5Pcreate(H5P_FILE_ACCESS)};
+
+        H5Pset_fapl_mpio(plist, MPI_COMM_WORLD, MPI_INFO_NULL);
+
+        auto file{H5Fcreate(std::format("{}.h5", name).data(), H5F_ACC_TRUNC,
+                            H5P_DEFAULT, plist)};
+
+        H5Pclose(plist);
+
+        // Set up data
+        std::array<hsize_t, NDims> global_dims;
+        std::copy(_global_size.begin(), _global_size.end(), global_dims.begin());
+
+        auto dataspace{H5Screate_simple(NDims, global_dims.data(), nullptr)};
+        auto h5t{[&]() {
+            if constexpr (std::is_same_v<R, float>) {
+                return H5T_NATIVE_FLOAT;
+            } else if constexpr (std::is_same_v<R, double>) {
+                return H5T_NATIVE_DOUBLE;
+            } else {
+                static_assert(false, "R must be a float or double");
+            }
+            std::unreachable();
+        }()};
+
+        auto dataset{H5Dcreate2(file, "/matrix", h5t, dataspace, H5P_DEFAULT,
+                                H5P_DEFAULT, H5P_DEFAULT)};
+        std::array<hsize_t, NDims> start;
+        std::copy(_local_start.begin(), _local_start.end(), start.begin());
+        std::array<hsize_t, NDims> local_dims;
+        std::copy(_local_size.begin(), _local_size.end(), local_dims.begin());
+        H5Sselect_hyperslab(dataspace, H5S_SELECT_SET, start.data(), nullptr,
+                            local_dims.data(), nullptr);
+        std::array<hsize_t, NDims> exterior_dims;
+        std::copy(_exterior_size.begin(), _exterior_size.end(),
+                  exterior_dims.begin());
+        std::array<hsize_t, NDims> interior_start;
+        std::fill(interior_start.begin(), interior_start.end(), 1);
+        auto memoryspace{H5Screate_simple(NDims, exterior_dims.data(),
+                                          nullptr)};
+        H5Sselect_hyperslab(memoryspace, H5S_SELECT_SET, interior_start.data(),
+                            nullptr, local_dims.data(), nullptr);
+
+        auto dxpl{H5Pcreate(H5P_DATASET_XFER)};
+
+        H5Pset_dxpl_mpio(dxpl, H5FD_MPIO_COLLECTIVE);
+
+        H5Dwrite(dataset, h5t, memoryspace, dataspace, dxpl,
+                 _mdarray.base());
+
+        H5Pclose(dxpl);
+        H5Sclose(memoryspace);
+        H5Dclose(dataset);
+        H5Sclose(dataspace);
+        H5Fclose(file);
+    }
 };

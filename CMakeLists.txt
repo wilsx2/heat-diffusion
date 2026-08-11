@@ -34,6 +34,7 @@ endif()
 # Packages
 find_package(OpenMP REQUIRED)
 find_package(MPI REQUIRED COMPONENTS CXX)
+find_package(HDF5 REQUIRED COMPONENTS C CXX)
 
 include(FetchContent)
 FetchContent_Declare(
@@ -63,6 +64,8 @@ target_include_directories(wacheat PUBLIC
 target_link_libraries(wacheat PUBLIC
     OpenMP::OpenMP_CXX
     MPI::MPI_CXX
+    hdf5::hdf5
+    hdf5::hdf5_cpp
     argparse
     multi
     spdlog

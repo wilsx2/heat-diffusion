@@ -18,8 +18,10 @@
     [X] Exchange
     [X] Object Orient
     [X] Persistent Async Requests
-[ ] I/O via HDF5
-[ ] Visualize via ParaView
+[X] I/O via HDF5
+[X] Visualize via HDMF & Paraview
+    [X] Store grid data 
+    [ ] Store global attributes & per-frame attributes
 [ ] Performance monitoring
 
 [ ] N-Dimensional

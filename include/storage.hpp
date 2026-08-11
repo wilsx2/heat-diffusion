@@ -1,36 +1,30 @@
 #pragma once
 
-#include <concepts>
-#include <cstddef>
-#include <filesystem>
-#include <fstream>
+#include "h5raii.hpp"
 #include <multi/array_ref.hpp>
+#include <pugixml.hpp>
 #include <spdlog/spdlog.h>
 #include <string_view>
 
-template <typename State, typename Format>
-auto serialize(std::ostream &, const State &, const Format &);
-
-template <typename Format>
-class PersistentStorage {
-private:
-    Format _format;
-    unsigned _saved_count = 0u;
+template <typename T>
+class Archive {
+protected:
+    int _rank;
+    std::string _light_data_filename;
+    std::string _heavy_data_filename;
+    pugi::xml_document _light_file;
+    H5ParallelFile _heavy_file;
 
 public:
-    PersistentStorage() = default;
-    PersistentStorage(Format &&format = {}) : _format(format) {}
-    template <typename State>
-    auto operator()(const State &state) -> bool {
-        std::ofstream file(
-            std::format("state_{}.{}", _saved_count, Format::extension));
-        if (!file.is_open()) {
-            return false;
+    Archive(const std::string &file_prefix, MPI_Comm comm, int rank)
+        : _light_data_filename(file_prefix + ".xmf"),
+          _heavy_data_filename(file_prefix + ".h5"),
+          _heavy_file(_heavy_data_filename.data(), comm) {}
+    ~Archive() {
+        if (_rank == 0) {
+            // WARN: No error checking
+            _light_file.save_file(_light_data_filename.data());
         }
-        auto success{serialize(file, state, _format)};
-        if (success) {
-            ++_saved_count;
-        }
-        return success;
     }
+    auto append_state(const T &state) -> void;
 };

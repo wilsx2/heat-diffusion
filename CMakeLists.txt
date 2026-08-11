@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.5)
 project(wacheat LANGUAGES C CXX)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -38,6 +38,17 @@ find_package(HDF5 REQUIRED COMPONENTS C CXX)
 
 include(FetchContent)
 FetchContent_Declare(
+  pugixml
+  GIT_REPOSITORY https://github.com/zeux/pugixml.git
+  GIT_TAG        v1.16
+)
+FetchContent_MakeAvailable(pugixml)
+FetchContent_Declare(
+    multi
+    GIT_REPOSITORY https://gitlab.com/correaa/boost-multi.git
+)
+FetchContent_MakeAvailable(multi)
+FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
     GIT_TAG        v1.15.0
@@ -48,11 +59,6 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/p-ranav/argparse.git
 )
 FetchContent_MakeAvailable(argparse)
-FetchContent_Declare(
-    multi
-    GIT_REPOSITORY https://gitlab.com/correaa/boost-multi.git
-)
-FetchContent_MakeAvailable(multi)
 
 # Application
 add_executable(wacheat
@@ -66,6 +72,7 @@ target_link_libraries(wacheat PUBLIC
     MPI::MPI_CXX
     hdf5::hdf5
     hdf5::hdf5_cpp
+    pugixml::pugixml
     argparse
     multi
     spdlog

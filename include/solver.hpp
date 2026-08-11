@@ -46,14 +46,13 @@ private:
     std::array<std::pair<R, R>, NDims> _dirichlet_boundary_conditions;
     R _gamma;
     int _saved_count;
-    std::array<DistributedGrid<R, NDims>, 2> _double_grid;
+    std::array<DistributedStructuredGrid<R, NDims>, 2> _double_grid;
     bool _current_grid;
 
-    H5ParallelFile _h5_file;
+    DSGArchive<R, NDims> _archive;
 
     auto save() -> void {
-        _double_grid[_current_grid].create_dataset(
-            _h5_file, std::format("{}", _saved_count++));
+        _archive.append_state(_double_grid[_current_grid], _saved_count++);
     }
 
 public:
@@ -69,16 +68,16 @@ public:
                  (_constants.time_step /
                   (_constants.space_step * _constants.space_step))),
           _saved_count(0),
-          _double_grid{DistributedGrid<R, NDims>{
+          _double_grid{DistributedStructuredGrid<R, NDims>{
                            _domain_size, (_constants.north + _constants.south +
                                           _constants.east + _constants.west) /
                                              R{4}},
-                       DistributedGrid<R, NDims>{
+                       DistributedStructuredGrid<R, NDims>{
                            _domain_size, (_constants.north + _constants.south +
                                           _constants.east + _constants.west) /
                                              R{4}}},
           _current_grid{false},
-          _h5_file{_double_grid[_current_grid].create_file("state.h5")} {}
+          _archive("sim", _double_grid[_current_grid]) {}
     auto run() -> void {
         SPDLOG_TRACE("run()");
         auto current_iterations{0u};

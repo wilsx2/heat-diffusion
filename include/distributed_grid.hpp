@@ -1,5 +1,9 @@
 #pragma once
 
+#include "storage.hpp"
+#include <cstdint>
+#include <span>
+
 #include "h5raii.hpp"
 #include <H5Fpublic.h>
 #include <H5Ppublic.h>
@@ -19,7 +23,7 @@
 #include <utility>
 
 template <std::floating_point R, std::ptrdiff_t NDims>
-class DistributedGrid {
+class DistributedStructuredGrid {
 private:
     using FaceView = decltype(std::declval<boost::multi::array<R, NDims> &>()(
         boost::multi::index_range{}, boost::multi::index_range{}));
@@ -37,10 +41,6 @@ private:
     std::inplace_vector<Face, NDims * 2> _boundary_faces;
 
     // Cache For H5 I/O
-    std::array<hsize_t, NDims> _h5_global_size;
-    std::array<hsize_t, NDims> _h5_local_start;
-    std::array<hsize_t, NDims> _h5_local_size;
-    std::array<hsize_t, NDims> _h5_exterior_size;
 
     // MPI Information
     int _world_rank, _world_size;
@@ -215,11 +215,12 @@ private:
     }
 
 public:
-    DistributedGrid(const DistributedGrid &) = delete;
-    DistributedGrid &operator=(const DistributedGrid &) = delete;
-    DistributedGrid(DistributedGrid &&) = delete;
-    DistributedGrid &operator=(DistributedGrid &&) = delete;
-    DistributedGrid(std::span<int, NDims> size, R default_value) {
+    DistributedStructuredGrid(const DistributedStructuredGrid &) = delete;
+    DistributedStructuredGrid &
+    operator=(const DistributedStructuredGrid &) = delete;
+    DistributedStructuredGrid(DistributedStructuredGrid &&) = delete;
+    DistributedStructuredGrid &operator=(DistributedStructuredGrid &&) = delete;
+    DistributedStructuredGrid(std::span<int, NDims> size, R default_value) {
         MPI_Comm_rank(MPI_COMM_WORLD, &_world_rank);
         MPI_Comm_size(MPI_COMM_WORLD, &_world_size);
         std::ranges::copy(size, _global_size.begin());
@@ -227,15 +228,6 @@ public:
                      _world_rank);
 
         init_topology();
-
-        std::ranges::transform(_global_size, _h5_global_size.begin(),
-                               [](int32_t v) { return static_cast<hsize_t>(v); });
-        std::ranges::transform(_local_start, _h5_local_start.begin(),
-                               [](int32_t v) { return static_cast<hsize_t>(v); });
-        std::ranges::transform(_local_size, _h5_local_size.begin(),
-                               [](int32_t v) { return static_cast<hsize_t>(v); });
-        std::ranges::transform(_exterior_size, _h5_exterior_size.begin(),
-                               [](int32_t v) { return static_cast<hsize_t>(v); });
 
         std::array<std::ptrdiff_t, NDims> extensions;
         for (auto dim : std::views::iota(0, NDims)) {
@@ -253,7 +245,7 @@ public:
         set_boundary_faces();
         init_requests();
     }
-    ~DistributedGrid() {
+    ~DistributedStructuredGrid() {
         deinit_transfer_types();
         deinit_requests();
         MPI_Comm_free(&_cart_comm);
@@ -286,14 +278,107 @@ public:
     auto local_start() const -> const std::array<int, NDims> & {
         return _local_start;
     }
+    auto global_size() const -> const std::array<int, NDims> & {
+        return _global_size;
+    }
     auto comm() const -> MPI_Comm { return _cart_comm; }
     auto world_rank() const -> int { return _world_rank; }
-    auto create_file(std::string_view filename) -> H5ParallelFile {
-        return H5ParallelFile{filename.data(), _cart_comm};
+};
+
+template <std::floating_point R, std::ptrdiff_t NDims>
+class DSGArchive : public Archive<DistributedStructuredGrid<R, NDims>> {
+private:
+    using DSG = DistributedStructuredGrid<R, NDims>;
+    using Base = Archive<DSG>;
+
+    std::array<hsize_t, NDims> _cached_global_size;
+    std::array<hsize_t, NDims> _cached_local_start;
+    std::array<hsize_t, NDims> _cached_local_size;
+    std::array<hsize_t, NDims> _cached_exterior_size;
+
+    auto write_light_data(const DSG &state, int step) {
+        auto point_dimensions_string{std::format(
+            "{} {}", state.global_size()[0] + 1,
+            state.global_size()[1] + 1)}; // TODO: Join global_size with spaces
+        auto cell_dimensions_string{std::format(
+            "{} {}", state.global_size()[0],
+            state.global_size()[1])}; // TODO: Join global_size with spaces
+
+        auto grid{this->_light_file.child("Xdmf")
+                      .child("Domain")
+                      .child("Grid")
+                      .append_child("Grid")};
+        grid.append_attribute("Name").set_value("T" + std::to_string(step));
+        grid.append_attribute("GridType").set_value("Uniform");
+
+        grid.append_child("Time").append_attribute("Value").set_value(
+            std::to_string(step)); // TODO: Attach meaningful information
+
+        {
+            auto topology(grid.append_child("Topology"));
+            topology.append_attribute("TopologyType")
+                .set_value(
+                    std::to_string(NDims) +
+                    "DCoRectMesh"); // WARN: Only works for 2d and 3d, no 1d
+            topology.append_attribute("Dimensions")
+                .set_value(point_dimensions_string);
+        }
+
+        {
+            auto geometry{grid.append_child("Geometry")};
+            auto geometry_type{geometry.append_attribute("GeometryType")};
+            if constexpr (NDims == 2) {
+                geometry_type.set_value("ORIGIN_DXDY");
+            } else if constexpr (NDims == 3) {
+                geometry_type.set_value("ORIGIN_DXDYDZ");
+            } else {
+                static_assert(false, "NDims must be either 2 or 3");
+                std::unreachable();
+            }
+
+            {
+                auto origin{geometry.append_child("DataItem")};
+                origin.append_attribute("Dimensions").set_value(NDims);
+                origin.append_attribute("Format").set_value("XML");
+                origin.text().set("0.0 0.0"); // TODO: Join NDim zeroes
+            }
+            {
+                auto delta{geometry.append_child("DataItem")};
+                delta.append_attribute("Dimensions").set_value(NDims);
+                delta.append_attribute("Format").set_value("XML");
+                delta.text().set("1.0 1.0"); // TODO: Join NDim meaningful spaces
+            }
+        }
+        {
+            auto attr{grid.append_child("Attribute")};
+            attr.append_attribute("Name").set_value(
+                "Value"); // TODO: Attach meaningful information
+            attr.append_attribute("AttributeType").set_value("Scalar");
+            attr.append_attribute("Center").set_value("Cell");
+            {
+                auto data_item{attr.append_child("DataItem")};
+                data_item.append_attribute("Dimensions")
+                    .set_value(cell_dimensions_string);
+                auto number_type{data_item.append_attribute("NumberType")};
+                if constexpr (std::is_same_v<R, float>) {
+                    number_type.set_value("Float");
+                } else if constexpr (std::is_same_v<R, double>) {
+                    number_type.set_value("Double");
+                } else {
+                    static_assert(false, "R must be either float or double");
+                    std::unreachable();
+                }
+                data_item.append_attribute("Precision").set_value(
+                    std::is_same_v<R, float> ? 4 : 8);
+                data_item.append_attribute("Format").set_value("HDF");
+                data_item.text().set(
+                    std::format("{}:/{}", this->_heavy_data_filename, step));
+            }
+        }
     }
-    auto create_dataset(H5ParallelFile& file, std::string_view name) {
+    auto write_heavy_data(const DSG &state, int step) {
         // https://cvw.cac.cornell.edu/parallel-io-libraries/phdf5/file-operations
-        H5Dataspace dataspace{NDims,_h5_global_size.data()};
+        H5Dataspace dataspace{NDims, _cached_global_size.data()};
         auto h5t{[&]() {
             if constexpr (std::is_same_v<R, float>) {
                 return H5T_NATIVE_FLOAT;
@@ -305,23 +390,61 @@ public:
             std::unreachable();
         }()};
 
-        H5Dataset dataset {*file, name.data(), h5t, *dataspace};
+        auto name{std::to_string(step)};
+        H5Dataset dataset{*this->_heavy_file, name.data(), h5t, *dataspace};
 
-        H5Sselect_hyperslab(*dataspace, H5S_SELECT_SET, _h5_local_start.data(), nullptr,
-                            _h5_local_size.data(), nullptr);
+        H5Sselect_hyperslab(*dataspace, H5S_SELECT_SET,
+                            _cached_local_start.data(), nullptr,
+                            _cached_local_size.data(), nullptr);
         std::array<hsize_t, NDims> interior_start;
         std::fill(interior_start.begin(), interior_start.end(), 1);
-        H5Dataspace memoryspace {NDims, _h5_exterior_size.data()};
+        H5Dataspace memoryspace{NDims, _cached_exterior_size.data()};
         H5Sselect_hyperslab(*memoryspace, H5S_SELECT_SET, interior_start.data(),
-                            nullptr, _h5_local_size.data(), nullptr);
+                            nullptr, _cached_local_size.data(), nullptr);
 
         auto dxpl{H5Pcreate(H5P_DATASET_XFER)};
 
         H5Pset_dxpl_mpio(dxpl, H5FD_MPIO_COLLECTIVE);
 
         H5Dwrite(*dataset, h5t, *memoryspace, *dataspace, dxpl,
-                 _mdarray.base());
+                 state.local_grid().base());
 
         H5Pclose(dxpl);
+    }
+
+public:
+    DSGArchive(std::string filename, const DSG &grid)
+        : Base(filename, grid.comm(), grid.world_rank()) {
+        std::ranges::transform(
+            grid.global_size(), _cached_global_size.begin(),
+            [](int32_t v) { return static_cast<hsize_t>(v); });
+        std::ranges::transform(
+            grid.local_start(), _cached_local_start.begin(),
+            [](int32_t v) { return static_cast<hsize_t>(v); });
+        std::ranges::transform(
+            grid.local_size(), _cached_local_size.begin(),
+            [](int32_t v) { return static_cast<hsize_t>(v); });
+        std::ranges::transform(
+            grid.local_size(), _cached_exterior_size.begin(),
+            [](int32_t v) { return static_cast<hsize_t>(v + 2); });
+
+        if (grid.world_rank() == 0) {
+            auto xdmf{this->_light_file.append_child("Xdmf")};
+            xdmf.append_attribute("Version").set_value("3.0");
+
+            auto grid_collection{
+                xdmf.append_child("Domain").append_child("Grid")};
+            grid_collection.append_attribute("Name").set_value("TimeSeries");
+            grid_collection.append_attribute("GridType")
+                .set_value("Collection");
+            grid_collection.append_attribute("CollectionType")
+                .set_value("Temporal");
+        }
+    }
+    auto append_state(const DSG &state, int step) {
+        write_heavy_data(state, step);
+        if (state.world_rank() == 0) {
+            write_light_data(state, step);
+        }
     }
 };

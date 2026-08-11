@@ -1,6 +1,7 @@
 #pragma once
 
 #include "distributed_grid.hpp"
+#include "h5raii.hpp"
 #include "serialization.hpp"
 #include "storage.hpp"
 
@@ -45,13 +46,14 @@ private:
     std::array<std::pair<R, R>, NDims> _dirichlet_boundary_conditions;
     R _gamma;
     int _saved_count;
-    std::array<DistributedGrid<R, NDims>, 2> double_grid;
-    bool current_grid;
+    std::array<DistributedGrid<R, NDims>, 2> _double_grid;
+    bool _current_grid;
+
+    H5ParallelFile _h5_file;
 
     auto save() -> void {
-        auto filename{std::format("state_{}", _saved_count++)};
-        auto file{double_grid[current_grid].create_file(filename + ".h5")};
-        double_grid[current_grid].create_dataset(file, filename);
+        _double_grid[_current_grid].create_dataset(
+            _h5_file, std::format("{}", _saved_count++));
     }
 
 public:
@@ -61,21 +63,22 @@ public:
           _domain_size{static_cast<int>(_constants.domain_width),
                        static_cast<int>(_constants.domain_height)},
           _dirichlet_boundary_conditions{
-              {{_constants.east, _constants.west},
-               {_constants.north, _constants.south}}}, // NOTE: Guessing
+              {{_constants.north, _constants.south},
+               {_constants.east, _constants.west}}},
           _gamma(_constants.diffusion_constant *
                  (_constants.time_step /
                   (_constants.space_step * _constants.space_step))),
           _saved_count(0),
-          double_grid{DistributedGrid<R, NDims>{
-                          _domain_size, (_constants.north + _constants.south +
-                                         _constants.east + _constants.west) /
-                                            R{4}},
-                      DistributedGrid<R, NDims>{
-                          _domain_size, (_constants.north + _constants.south +
-                                         _constants.east + _constants.west) /
-                                            R{4}}},
-          current_grid{false} {}
+          _double_grid{DistributedGrid<R, NDims>{
+                           _domain_size, (_constants.north + _constants.south +
+                                          _constants.east + _constants.west) /
+                                             R{4}},
+                       DistributedGrid<R, NDims>{
+                           _domain_size, (_constants.north + _constants.south +
+                                          _constants.east + _constants.west) /
+                                             R{4}}},
+          _current_grid{false},
+          _h5_file{_double_grid[_current_grid].create_file("state.h5")} {}
     auto run() -> void {
         SPDLOG_TRACE("run()");
         auto current_iterations{0u};
@@ -88,14 +91,14 @@ public:
             SPDLOG_TRACE("Iteration {}", current_iterations);
 
             // Conditionally perform halo exchange / apply boundary condition
-            double_grid[current_grid].synchronize_halos(
+            _double_grid[_current_grid].synchronize_halos(
                 _dirichlet_boundary_conditions);
 
             // Solve
             auto total_norm_delta{R{0}};
-            auto &curr{double_grid[current_grid].local_grid()};
-            auto &next{double_grid[!current_grid].local_grid()};
-            auto inner_indices{double_grid[current_grid].inner_coordinates()};
+            auto &curr{_double_grid[_current_grid].local_grid()};
+            auto &next{_double_grid[!_current_grid].local_grid()};
+            auto inner_indices{_double_grid[_current_grid].inner_coordinates()};
 #pragma omp parallel for reduction(+ : total_norm_delta)
             for (auto [i, j] : inner_indices) {
                 auto neighbor_sum{curr[i + 1][j] + curr[i - 1][j] +
@@ -109,7 +112,7 @@ public:
                                 static_cast<R>(inner_indices.size())};
 
             // Swap roles of current and next grids
-            current_grid = !current_grid;
+            _current_grid = !_current_grid;
 
             // Save
             if (current_iterations % _constants.storage_interval == 0) {

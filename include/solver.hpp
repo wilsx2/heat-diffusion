@@ -50,7 +50,8 @@ private:
 
     auto save() -> void {
         auto filename{std::format("state_{}", _saved_count++)};
-        double_grid[current_grid].save_to_h5(filename);
+        auto file{double_grid[current_grid].create_file(filename + ".h5")};
+        double_grid[current_grid].create_dataset(file, filename);
     }
 
 public:

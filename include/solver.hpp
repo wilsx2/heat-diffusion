@@ -45,15 +45,10 @@ private:
     std::array<int, NDims> _domain_size;
     std::array<std::pair<R, R>, NDims> _dirichlet_boundary_conditions;
     R _gamma;
-    int _saved_count;
     std::array<DistributedStructuredGrid<R, NDims>, 2> _double_grid;
     bool _current_grid;
 
     DSGArchive<R, NDims> _archive;
-
-    auto save() -> void {
-        _archive.append_state(_double_grid[_current_grid], _saved_count++);
-    }
 
 public:
     SpmdFdm2dExplicitHeatEqSolver() = delete;
@@ -61,13 +56,11 @@ public:
         : _constants(config),
           _domain_size{static_cast<int>(_constants.domain_width),
                        static_cast<int>(_constants.domain_height)},
-          _dirichlet_boundary_conditions{
-              {{_constants.north, _constants.south},
-               {_constants.east, _constants.west}}},
+          _dirichlet_boundary_conditions{{{_constants.north, _constants.south},
+                                          {_constants.east, _constants.west}}},
           _gamma(_constants.diffusion_constant *
                  (_constants.time_step /
                   (_constants.space_step * _constants.space_step))),
-          _saved_count(0),
           _double_grid{DistributedStructuredGrid<R, NDims>{
                            _domain_size, (_constants.north + _constants.south +
                                           _constants.east + _constants.west) /
@@ -77,13 +70,12 @@ public:
                                           _constants.east + _constants.west) /
                                              R{4}}},
           _current_grid{false},
-          _archive("sim", _double_grid[_current_grid]) {}
+          _archive("sim", "temperature", _constants.space_step,
+                   _double_grid[_current_grid]) {}
     auto run() -> void {
         SPDLOG_TRACE("run()");
         auto current_iterations{0u};
         auto converged{false};
-
-        save();
 
         // Perform simulation
         while (!converged) {
@@ -115,7 +107,9 @@ public:
 
             // Save
             if (current_iterations % _constants.storage_interval == 0) {
-                save();
+                _archive.append_state(
+                    _double_grid[_current_grid], current_iterations,
+                    current_iterations * _constants.time_step);
             }
 
             // Check convergence
@@ -123,6 +117,10 @@ public:
                         current_iterations >= _constants.max_iterations;
             ++current_iterations;
         }
-        save();
+        if ((current_iterations - 1) % _constants.storage_interval != 0) {
+            _archive.append_state(_double_grid[_current_grid],
+                                  current_iterations,
+                                  current_iterations * _constants.time_step);
+        }
     }
 };

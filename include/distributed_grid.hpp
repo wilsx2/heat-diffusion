@@ -295,8 +295,10 @@ private:
     std::array<hsize_t, NDims> _cached_local_start;
     std::array<hsize_t, NDims> _cached_local_size;
     std::array<hsize_t, NDims> _cached_exterior_size;
+    std::string _label;
+    R _block_size;
 
-    auto write_light_data(const DSG &state, int step) {
+    auto write_light_data(const DSG &state, int step, R time) {
         auto point_dimensions_string{std::format(
             "{} {}", state.global_size()[0] + 1,
             state.global_size()[1] + 1)}; // TODO: Join global_size with spaces
@@ -312,7 +314,7 @@ private:
         grid.append_attribute("GridType").set_value("Uniform");
 
         grid.append_child("Time").append_attribute("Value").set_value(
-            std::to_string(step)); // TODO: Attach meaningful information
+            std::to_string(time));
 
         {
             auto topology(grid.append_child("Topology"));
@@ -346,13 +348,14 @@ private:
                 auto delta{geometry.append_child("DataItem")};
                 delta.append_attribute("Dimensions").set_value(NDims);
                 delta.append_attribute("Format").set_value("XML");
-                delta.text().set("1.0 1.0"); // TODO: Join NDim meaningful spaces
+                delta.text().set(
+                    std::format("{} {}", _block_size,
+                                _block_size)); // TODO: Join NDim of block size
             }
         }
         {
             auto attr{grid.append_child("Attribute")};
-            attr.append_attribute("Name").set_value(
-                "Value"); // TODO: Attach meaningful information
+            attr.append_attribute("Name").set_value(_label);
             attr.append_attribute("AttributeType").set_value("Scalar");
             attr.append_attribute("Center").set_value("Cell");
             {
@@ -368,8 +371,8 @@ private:
                     static_assert(false, "R must be either float or double");
                     std::unreachable();
                 }
-                data_item.append_attribute("Precision").set_value(
-                    std::is_same_v<R, float> ? 4 : 8);
+                data_item.append_attribute("Precision")
+                    .set_value(std::is_same_v<R, float> ? 4 : 8);
                 data_item.append_attribute("Format").set_value("HDF");
                 data_item.text().set(
                     std::format("{}:/{}", this->_heavy_data_filename, step));
@@ -413,8 +416,10 @@ private:
     }
 
 public:
-    DSGArchive(std::string filename, const DSG &grid)
-        : Base(filename, grid.comm(), grid.world_rank()) {
+    DSGArchive(std::string filename, std::string label, R block_size,
+               const DSG &grid)
+        : Base(filename, grid.comm(), grid.world_rank()), _label(label),
+          _block_size(block_size) {
         std::ranges::transform(
             grid.global_size(), _cached_global_size.begin(),
             [](int32_t v) { return static_cast<hsize_t>(v); });
@@ -441,10 +446,10 @@ public:
                 .set_value("Temporal");
         }
     }
-    auto append_state(const DSG &state, int step) {
+    auto append_state(const DSG &state, int step, R time) {
         write_heavy_data(state, step);
         if (state.world_rank() == 0) {
-            write_light_data(state, step);
+            write_light_data(state, step, time);
         }
     }
 };

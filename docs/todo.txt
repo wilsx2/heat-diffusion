@@ -21,7 +21,7 @@
 [X] I/O via HDF5
 [X] Visualize via HDMF & Paraview
     [X] Store grid data 
-    [ ] Store global attributes & per-frame attributes
+    [X] Store global attributes & per-frame attributes
 [ ] Performance monitoring
 
 [ ] N-Dimensional

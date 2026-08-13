@@ -36,6 +36,11 @@ auto parse_child(const pugi::xml_node &node, std::string_view child_name,
     }
 }
 
+template <std::floating_point R>
+auto float_format() -> std::string_view {
+    return std::is_same_v<R, float> ? "%g" : "%lg";
+}
+
 int main(int argc, char *argv[]) {
     MPI_Init(&argc, &argv);
 
@@ -104,47 +109,69 @@ int main(int argc, char *argv[]) {
         std::exit(EXIT_FAILURE);
     }
 
-    // TODO: Parse out dimensions and precision
-    using R = float;
-    constexpr auto NDims = 3;
-    SpmdFdm2dExplicitHeatEqSolver<R, NDims>::Configuration conf{};
-    parse_child(sim, "diffusion", "%g", conf.diffusion_constant);
-    parse_child(sim, "checkpoint", "%u", conf.storage_interval);
-    {
-        auto grid{sim.child("discretization")};
-        // TODO: Assert type is grid
-        parse_child(grid, "time_step", "%g", conf.time_step);
-        parse_child(grid, "cell_size", "%g", conf.space_step);
+    auto parse_and_run{[&]<std::floating_point R, int NDims>() {
+        typename SpmdFdm2dExplicitHeatEqSolver<R, NDims>::Configuration conf{};
+        parse_child(sim, "diffusion", float_format<R>(), conf.diffusion_constant);
+        parse_child(sim, "checkpoint", "%u", conf.storage_interval);
         {
-            auto dimensions{grid.child("dimensions")};
-            for (auto i : std::views::iota(0, NDims)) {
-                std::string key{std::format("dim{}", i)};
-                parse_child(dimensions, key, "%d", conf.domain_size[i]);
+            auto grid{sim.child("discretization")};
+            // TODO: Assert type is grid
+            parse_child(grid, "time_step", float_format<R>(), conf.time_step);
+            parse_child(grid, "cell_size", float_format<R>(), conf.space_step);
+            {
+                auto dimensions{grid.child("dimensions")};
+                for (auto i : std::views::iota(0, NDims)) {
+                    std::string key{std::format("dim{}", i)};
+                    parse_child(dimensions, key, "%d", conf.domain_size[i]);
+                }
             }
         }
-    }
-    {
-        auto boundary_conditions{sim.child("boundary_conditions")};
-        for (auto i : std::views::iota(0, NDims)) {
-            std::string key{std::format("axis{}", i)};
-            parse_child(boundary_conditions, key, "%g %g",
-                        conf.dierichlet_boundary_conditions[i].first,
-                        conf.dierichlet_boundary_conditions[i].second);
+        {
+            auto boundary_conditions{sim.child("boundary_conditions")};
+            for (auto i : std::views::iota(0, NDims)) {
+                std::string key{std::format("axis{}", i)};
+                parse_child(boundary_conditions, key,
+                            std::format("{} {}", float_format<R>(),
+                                        float_format<R>()),
+                            conf.dierichlet_boundary_conditions[i].first,
+                            conf.dierichlet_boundary_conditions[i].second);
+            }
+        }
+
+        {
+            auto convergence_conditions{sim.child("convergence_conditions")};
+            parse_child(convergence_conditions, "iterations_under", "%u",
+                        conf.max_iterations);
+            parse_child(convergence_conditions, "avg_delta_over",
+                        float_format<R>(), conf.epsilon);
+        }
+
+        {
+            SpmdFdm2dExplicitHeatEqSolver<R, NDims> solver{std::move(conf)};
+            solver.run();
+        }
+    }};
+
+    char precision[16]{};
+    int dimensions;
+    parse_child(sim, "precision", "%15s", precision);
+    parse_child(sim, "dimensions", "%d", dimensions);
+
+    const std::string_view precision_view{precision};
+    if (precision_view == "float") {
+        if (dimensions == 2) {
+            parse_and_run.template operator()<float, 2>();
+        } else if (dimensions == 3) {
+            parse_and_run.template operator()<float, 3>();
+        }
+    } else if (precision_view == "double") {
+        if (dimensions == 2) {
+            parse_and_run.template operator()<double, 2>();
+        } else if (dimensions == 3) {
+            parse_and_run.template operator()<double, 3>();
         }
     }
 
-    {
-        auto convergence_conditions{sim.child("convergence_conditions")};
-        parse_child(convergence_conditions, "iterations_under", "%u",
-                    conf.max_iterations);
-        parse_child(convergence_conditions, "avg_delta_over", "%g",
-                    conf.epsilon);
-    }
-
-    {
-        SpmdFdm2dExplicitHeatEqSolver<R, NDims> solver{std::move(conf)};
-        solver.run();
-    }
     MPI_Finalize();
     return 0;
 }

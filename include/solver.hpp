@@ -64,11 +64,11 @@ public:
           _double_grid{DistributedStructuredGrid<R, NDims>{
                            _domain_size, (_constants.north + _constants.south +
                                           _constants.east + _constants.west) /
-                                             R{4}},
+                                             R{NDims * 2}},
                        DistributedStructuredGrid<R, NDims>{
                            _domain_size, (_constants.north + _constants.south +
                                           _constants.east + _constants.west) /
-                                             R{4}}},
+                                             R{NDims * 2}}},
           _current_grid{false},
           _archive("sim", "temperature", _constants.space_step,
                    _double_grid[_current_grid]) {}
@@ -102,7 +102,7 @@ public:
                     std::get<D>(first_neighbor_idx) -= 1;
                     std::get<D>(last_neighbor_idx) += 1;
                     neighbor_sum += curr.apply(first_neighbor_idx) +
-                                   curr.apply(last_neighbor_idx);
+                                    curr.apply(last_neighbor_idx);
                 }
 
                 auto delta{_gamma *

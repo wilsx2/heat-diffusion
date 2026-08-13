@@ -73,16 +73,17 @@ private:
         /// Find coordinates
         MPI_Cart_coords(_cart_comm, _world_rank, NDims, _cart_coords.data());
         MPI_Cart_rank(_cart_comm, _cart_coords.data(), &_cart_rank);
-        SPDLOG_DEBUG("R{}: ({},{}); originally {}", _cart_rank, _cart_coords[0],
-                     _cart_coords[1], _world_rank);
+        SPDLOG_DEBUG(std::format("World Rank {} -> Cart Rank {}; Coords: {}", _cart_rank,
+                     _world_rank, _cart_coords));
 
         /// Find neighbors
         for (auto dim : std::views::iota(0, NDims)) {
             MPI_Cart_shift(_cart_comm, dim, 1, &_cart_neighbors[dim].first,
                            &_cart_neighbors[dim].second);
-            SPDLOG_DEBUG("R{}, my neighbors in dim {} are {} and {}",
-                         _cart_rank, dim, _cart_neighbors[dim].first,
-                         _cart_neighbors[dim].second);
+            SPDLOG_DEBUG(
+                "Rank {}: My neighbors in Dimension {} are Rank {} and Rank {}",
+                _cart_rank, dim, _cart_neighbors[dim].first,
+                _cart_neighbors[dim].second);
         }
 
         // Initialize local grid
@@ -94,8 +95,8 @@ private:
                                    : _global_size[dim] - _local_start[dim];
             _exterior_size[dim] = _local_size[dim] + 2;
         }
-        SPDLOG_DEBUG("R{} : {},{} : {}x{}", _cart_rank, _local_start[0],
-                     _local_start[1], _local_size[0], _local_size[1]);
+        SPDLOG_DEBUG(std::format("Rank {}: My partition starts at {} and has size {}",
+                     _cart_rank, _local_start, _local_size));
     }
     auto init_transfer_types() -> void {
         MPI_Datatype element_type;

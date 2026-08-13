@@ -27,6 +27,8 @@ Minimal
 Completion
 [X] N-Dimensional
 [ ] Input file parser
+    [X] Single Template
+    [ ] Variable Template
 [ ] Neumann Boundary Condition
 [ ] Periodic Boundary Condition
 [ ] Arithmetic Expression Initial Conditions
@@ -43,3 +45,6 @@ Unorderered; Important
 [ ] GPU (CUDA or Kokkos)
 [ ] Performance monitoring
 [ ] Apptainer
+
+Unimportant
+[ ] Unit Annotations

@@ -22,18 +22,18 @@ template <std::floating_point R, std::ptrdiff_t NDims>
 class SpmdFdm2dExplicitHeatEqSolver {
 public:
     struct Configuration {
-        const std::array<int, NDims> domain_size;
+        std::array<int, NDims> domain_size;
         // Heat Equation Parameters
-        const R diffusion_constant;
-        const R time_step;
-        const R space_step;
+        R diffusion_constant;
+        R time_step;
+        R space_step;
         // Cardinal Dirichlet Boundary Conditions
-        const std::array<std::pair<R, R>, NDims> dierichlet_boundary_conditions;
+        std::array<std::pair<R, R>, NDims> dierichlet_boundary_conditions;
         // Convergence Params
-        const R epsilon;
-        const unsigned max_iterations;
+        R epsilon;
+        unsigned max_iterations;
         // Storage Params
-        const unsigned storage_interval;
+        unsigned storage_interval;
     };
 
 private:

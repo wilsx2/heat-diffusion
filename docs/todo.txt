@@ -26,9 +26,9 @@ Minimal
 
 Completion
 [X] N-Dimensional
-[ ] Input file parser
+[X] Input file parser
     [X] Single Template
-    [ ] Variable Template
+    [X] Variable Template
 [ ] Neumann Boundary Condition
 [ ] Periodic Boundary Condition
 [ ] Arithmetic Expression Initial Conditions

@@ -3,43 +3,30 @@
 #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
 #endif
 
-#include "solver.hpp"
+#include "input.hpp"
 
 #include <argparse/argparse.hpp>
 #include <mpi.h>
-#include <multi/array.hpp>
 #include <spdlog/spdlog.h>
 
-#include <cstdio>
 #include <cstdlib>
+#include <format>
+#include <fstream>
+#include <functional>
 #include <iostream>
+#include <map>
 #include <print>
+#include <string>
 #include <string_view>
+#include <utility>
 
-namespace multi = boost::multi;
-
-template <typename... Args>
-auto parse_child(const pugi::xml_node &node, std::string_view child_name,
-                 std::string_view format, Args &...args) -> void {
-    if (!node.child(child_name.data())) {
-        SPDLOG_ERROR("Missing required element <{}> in <{}>", child_name,
-                     node.name());
-        std::exit(EXIT_FAILURE);
-    }
-    auto value{node.child_value(child_name.data())};
-    auto matches{std::sscanf(value, format.data(), &args...)};
-    if (matches == EOF || matches < static_cast<int>(sizeof...(Args))) {
-        SPDLOG_ERROR("Failed to parse <{}> in <{}>: expected {} value(s) but "
-                     "parsed {} from \"{}\"",
-                     child_name, node.name(), sizeof...(Args), matches, value);
-        std::exit(EXIT_FAILURE);
-    }
-}
-
-template <std::floating_point R>
-auto float_format() -> std::string_view {
-    return std::is_same_v<R, float> ? "%g" : "%lg";
-}
+static const std::map<std::pair<std::string_view, int>,
+                      std::function<void(const pugi::xml_node &)>> solvers{
+    {{"float", 2}, [](const auto &sim) { solve<float, 2>(sim); }},
+    {{"float", 3}, [](const auto &sim) { solve<float, 3>(sim); }},
+    {{"double", 2}, [](const auto &sim) { solve<double, 2>(sim); }},
+    {{"double", 3}, [](const auto &sim) { solve<double, 3>(sim); }},
+};
 
 int main(int argc, char *argv[]) {
     MPI_Init(&argc, &argv);
@@ -60,7 +47,8 @@ int main(int argc, char *argv[]) {
     } catch (const std::exception &err) {
         std::cerr << err.what() << std::endl;
         std::cerr << program;
-        return 1;
+        MPI_Finalize();
+        return EXIT_FAILURE;
     }
 
     auto output_path{program.get<std::string>("--output")};
@@ -69,7 +57,8 @@ int main(int argc, char *argv[]) {
         std::filesystem::current_path(output_path);
     } catch (const std::exception &err) {
         std::print("Directory '{}' failed to create or enter", output_path);
-        std::exit(EXIT_FAILURE);
+        MPI_Finalize();
+        return EXIT_FAILURE;
     }
 
     spdlog::set_level([&]() {
@@ -90,86 +79,40 @@ int main(int argc, char *argv[]) {
         return spdlog::level::off;
     }());
 
-    pugi::xml_document doc;
-    auto input_file{program.get<std::string>("input")};
-    std::ifstream stream{input_file};
-    pugi::xml_parse_result result = doc.load(stream);
-    if (!result) {
-        SPDLOG_ERROR("Failed to load input file \"{}\": {}", input_file,
-                     result.description());
-        std::exit(EXIT_FAILURE);
-    }
-
-    auto sim{doc.child("simulation")};
-    const std::string_view sim_type{sim.attribute("type").value()};
-    if (sim_type != "heat") {
-        SPDLOG_ERROR(
-            "Non-heat simulation types not supported (\"{}\" provided)",
-            sim_type);
-        std::exit(EXIT_FAILURE);
-    }
-
-    auto parse_and_run{[&]<std::floating_point R, int NDims>() {
-        typename SpmdFdm2dExplicitHeatEqSolver<R, NDims>::Configuration conf{};
-        parse_child(sim, "diffusion", float_format<R>(), conf.diffusion_constant);
-        parse_child(sim, "checkpoint", "%u", conf.storage_interval);
-        {
-            auto grid{sim.child("discretization")};
-            // TODO: Assert type is grid
-            parse_child(grid, "time_step", float_format<R>(), conf.time_step);
-            parse_child(grid, "cell_size", float_format<R>(), conf.space_step);
-            {
-                auto dimensions{grid.child("dimensions")};
-                for (auto i : std::views::iota(0, NDims)) {
-                    std::string key{std::format("dim{}", i)};
-                    parse_child(dimensions, key, "%d", conf.domain_size[i]);
-                }
-            }
-        }
-        {
-            auto boundary_conditions{sim.child("boundary_conditions")};
-            for (auto i : std::views::iota(0, NDims)) {
-                std::string key{std::format("axis{}", i)};
-                parse_child(boundary_conditions, key,
-                            std::format("{} {}", float_format<R>(),
-                                        float_format<R>()),
-                            conf.dierichlet_boundary_conditions[i].first,
-                            conf.dierichlet_boundary_conditions[i].second);
-            }
+    try {
+        pugi::xml_document doc;
+        auto input_file{program.get<std::string>("input")};
+        std::ifstream stream{input_file};
+        pugi::xml_parse_result result = doc.load(stream);
+        if (!result) {
+            throw ConfigError{std::format(
+                "Failed to load input file \"{}\": {}", input_file,
+                result.description())};
         }
 
-        {
-            auto convergence_conditions{sim.child("convergence_conditions")};
-            parse_child(convergence_conditions, "iterations_under", "%u",
-                        conf.max_iterations);
-            parse_child(convergence_conditions, "avg_delta_over",
-                        float_format<R>(), conf.epsilon);
+        auto sim{doc.child("simulation")};
+        if (std::string_view sim_type{sim.attribute("type").value()};
+            sim_type != "heat") {
+            throw ConfigError{
+                std::format("Non-heat simulation types not supported (\"{}\" "
+                            "provided)",
+                            sim_type)};
         }
 
-        {
-            SpmdFdm2dExplicitHeatEqSolver<R, NDims> solver{std::move(conf)};
-            solver.run();
+        auto precision{child_text(sim, "precision")};
+        auto dimensions{child_value<int>(sim, "dimensions")};
+        if (auto entry{solvers.find({precision, dimensions})};
+            entry != solvers.end()) {
+            entry->second(sim);
+        } else {
+            throw ConfigError{std::format(
+                "Unsupported precision/dimensions: {}/{}D", precision,
+                dimensions)};
         }
-    }};
-
-    char precision[16]{};
-    int dimensions;
-    parse_child(sim, "precision", "%15s", precision);
-    parse_child(sim, "dimensions", "%d", dimensions);
-
-    const std::string_view precision_view{precision};
-    if (precision_view == "float") {
-        if (dimensions == 2) {
-            parse_and_run.template operator()<float, 2>();
-        } else if (dimensions == 3) {
-            parse_and_run.template operator()<float, 3>();
-        }
-    } else if (precision_view == "double") {
-        if (dimensions == 2) {
-            parse_and_run.template operator()<double, 2>();
-        } else if (dimensions == 3) {
-            parse_and_run.template operator()<double, 3>();
-        }
+    } catch (const std::exception &err) {
+        SPDLOG_ERROR("{}", err.what());
+        MPI_Finalize();
+        return EXIT_FAILURE;
     }
 
     MPI_Finalize();

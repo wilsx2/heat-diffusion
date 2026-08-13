@@ -1,3 +1,4 @@
+Minimal
 [X] Single-file MVP
     [X] Iterations
     [X] Boundary Conditions
@@ -22,14 +23,22 @@
 [X] Visualize via HDMF & Paraview
     [X] Store grid data 
     [X] Store global attributes & per-frame attributes
-[ ] Performance monitoring
 
+Completion
 [ ] N-Dimensional
 [ ] Neumann Boundary Condition
 [ ] Input file parser
 [ ] Arithmetic Expression Initial Conditions
 [ ] Arithmetic Expression Boundary Condition
-[ ] ? Other Convergence Conditions
+[ ] Reasonable Convergence Conditions
+
+Challenge
 [ ] Implicit Method (PETSc?)
 [ ] FEM
-[ ] FEM Boundary Conditions
+    [ ] On generated grid
+    [ ] Mesh loader
+
+Unorderered; Important
+[ ] GPU (CUDA or Kokkos)
+[ ] Performance monitoring
+[ ] Apptainer

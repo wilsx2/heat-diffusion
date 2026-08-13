@@ -86,21 +86,33 @@ public:
                 _dirichlet_boundary_conditions);
 
             // Solve
-            auto total_norm_delta{R{0}};
+            R total_norm_delta{0};
             auto &curr{_double_grid[_current_grid].local_grid()};
             auto &next{_double_grid[!_current_grid].local_grid()};
-            auto inner_indices{_double_grid[_current_grid].inner_coordinates()};
+            auto inner_coordinates{
+                _double_grid[_current_grid].inner_coordinates()};
 #pragma omp parallel for reduction(+ : total_norm_delta)
-            for (auto [i, j] : inner_indices) {
-                auto neighbor_sum{curr[i + 1][j] + curr[i - 1][j] +
-                                  curr[i][j + 1] + curr[i][j - 1]};
+            for (auto idx : inner_coordinates) {
+                constexpr auto NumNeighbors{NDims * 2};
+                R neighbor_sum{0};
+                static constexpr auto DimSeq{std::make_index_sequence<NDims>{}};
+                template for (constexpr auto D : DimSeq) {
+                    auto first_neighbor_idx{idx};
+                    auto last_neighbor_idx{idx};
+                    std::get<D>(first_neighbor_idx) -= 1;
+                    std::get<D>(last_neighbor_idx) += 1;
+                    neighbor_sum += curr.apply(first_neighbor_idx) +
+                                   curr.apply(last_neighbor_idx);
+                }
+
                 auto delta{_gamma *
-                           (neighbor_sum - static_cast<R>(4) * curr[i][j])};
-                next[i][j] = curr[i][j] + delta;
+                           (neighbor_sum -
+                            static_cast<R>(NumNeighbors) * curr.apply(idx))};
+                next.apply(idx) = curr.apply(idx) + delta;
                 total_norm_delta += delta * delta;
             }
             auto avg_norm_delta{total_norm_delta /
-                                static_cast<R>(inner_indices.size())};
+                                static_cast<R>(inner_coordinates.size())};
 
             // Swap roles of current and next grids
             _current_grid = !_current_grid;

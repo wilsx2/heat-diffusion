@@ -73,8 +73,8 @@ private:
         /// Find coordinates
         MPI_Cart_coords(_cart_comm, _world_rank, NDims, _cart_coords.data());
         MPI_Cart_rank(_cart_comm, _cart_coords.data(), &_cart_rank);
-        SPDLOG_DEBUG(std::format("World Rank {} -> Cart Rank {}; Coords: {}", _cart_rank,
-                     _world_rank, _cart_coords));
+        SPDLOG_DEBUG(std::format("World Rank {} -> Cart Rank {}; Coords: {}",
+                                 _cart_rank, _world_rank, _cart_coords));
 
         /// Find neighbors
         for (auto dim : std::views::iota(0, NDims)) {
@@ -95,8 +95,9 @@ private:
                                    : _global_size[dim] - _local_start[dim];
             _exterior_size[dim] = _local_size[dim] + 2;
         }
-        SPDLOG_DEBUG(std::format("Rank {}: My partition starts at {} and has size {}",
-                     _cart_rank, _local_start, _local_size));
+        SPDLOG_DEBUG(
+            std::format("Rank {}: My partition starts at {} and has size {}",
+                        _cart_rank, _local_start, _local_size));
     }
     auto init_transfer_types() -> void {
         MPI_Datatype element_type;
@@ -300,13 +301,6 @@ private:
     R _block_size;
 
     auto write_light_data(const DSG &state, int step, R time) {
-        auto point_dimensions_string{std::format(
-            "{} {}", state.global_size()[0] + 1,
-            state.global_size()[1] + 1)}; // TODO: Join global_size with spaces
-        auto cell_dimensions_string{std::format(
-            "{} {}", state.global_size()[0],
-            state.global_size()[1])}; // TODO: Join global_size with spaces
-
         auto grid{this->_light_file.child("Xdmf")
                       .child("Domain")
                       .child("Grid")
@@ -318,6 +312,12 @@ private:
             std::to_string(time));
 
         {
+            static const std::string point_dimensions_string(
+                state.global_size() | std::views::transform([&](auto size) {
+                    return std::format("{}", size + 1);
+                }) |
+                std::views::join_with(' ') | std::ranges::to<std::string>());
+
             auto topology(grid.append_child("Topology"));
             topology.append_attribute("TopologyType")
                 .set_value(
@@ -340,18 +340,26 @@ private:
             }
 
             {
+                using namespace std::string_view_literals;
+                static const std::string ndim_zeros(
+                    std::views::repeat("0.0"sv, NDims) |
+                    std::views::join_with(' ') |
+                    std::ranges::to<std::string>());
+
                 auto origin{geometry.append_child("DataItem")};
                 origin.append_attribute("Dimensions").set_value(NDims);
                 origin.append_attribute("Format").set_value("XML");
-                origin.text().set("0.0 0.0"); // TODO: Join NDim zeroes
+                origin.text().set(ndim_zeros); // TODO: Join NDim zeroes
             }
             {
+                static const std::string ndim_block_sizes(
+                    std::views::repeat(std::format("{}", _block_size), NDims) |
+                    std::views::join_with(' ') |
+                    std::ranges::to<std::string>());
                 auto delta{geometry.append_child("DataItem")};
                 delta.append_attribute("Dimensions").set_value(NDims);
                 delta.append_attribute("Format").set_value("XML");
-                delta.text().set(
-                    std::format("{} {}", _block_size,
-                                _block_size)); // TODO: Join NDim of block size
+                delta.text().set(ndim_block_sizes);
             }
         }
         {
@@ -360,6 +368,13 @@ private:
             attr.append_attribute("AttributeType").set_value("Scalar");
             attr.append_attribute("Center").set_value("Cell");
             {
+                static const std::string cell_dimensions_string(
+                    state.global_size() | std::views::transform([&](auto size) {
+                        return std::format("{}", size);
+                    }) |
+                    std::views::join_with(' ') |
+                    std::ranges::to<std::string>());
+
                 auto data_item{attr.append_child("DataItem")};
                 data_item.append_attribute("Dimensions")
                     .set_value(cell_dimensions_string);

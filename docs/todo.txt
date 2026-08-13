@@ -25,9 +25,10 @@ Minimal
     [X] Store global attributes & per-frame attributes
 
 Completion
-[ ] N-Dimensional
-[ ] Neumann Boundary Condition
+[X] N-Dimensional
 [ ] Input file parser
+[ ] Neumann Boundary Condition
+[ ] Periodic Boundary Condition
 [ ] Arithmetic Expression Initial Conditions
 [ ] Arithmetic Expression Boundary Condition
 [ ] Reasonable Convergence Conditions

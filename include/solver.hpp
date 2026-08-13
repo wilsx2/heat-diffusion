@@ -13,25 +13,22 @@
 #include <concepts>
 #include <cstddef>
 #include <format>
+#include <numeric>
 #include <ranges>
 #include <utility>
 #include <vector>
 
-template <std::floating_point R>
+template <std::floating_point R, std::ptrdiff_t NDims>
 class SpmdFdm2dExplicitHeatEqSolver {
 public:
     struct Configuration {
-        const std::ptrdiff_t domain_width;
-        const std::ptrdiff_t domain_height;
+        const std::array<int, NDims> domain_size;
         // Heat Equation Parameters
         const R diffusion_constant;
         const R time_step;
         const R space_step;
         // Cardinal Dirichlet Boundary Conditions
-        const R north;
-        const R south;
-        const R east;
-        const R west;
+        const std::array<std::pair<R, R>, NDims> dierichlet_boundary_conditions;
         // Convergence Params
         const R epsilon;
         const unsigned max_iterations;
@@ -40,10 +37,7 @@ public:
     };
 
 private:
-    static constexpr std::ptrdiff_t NDims = 2;
     const Configuration _constants;
-    std::array<int, NDims> _domain_size;
-    std::array<std::pair<R, R>, NDims> _dirichlet_boundary_conditions;
     R _gamma;
     std::array<DistributedStructuredGrid<R, NDims>, 2> _double_grid;
     bool _current_grid;
@@ -54,21 +48,28 @@ public:
     SpmdFdm2dExplicitHeatEqSolver() = delete;
     SpmdFdm2dExplicitHeatEqSolver(Configuration &&config)
         : _constants(config),
-          _domain_size{static_cast<int>(_constants.domain_width),
-                       static_cast<int>(_constants.domain_height)},
-          _dirichlet_boundary_conditions{{{_constants.north, _constants.south},
-                                          {_constants.east, _constants.west}}},
           _gamma(_constants.diffusion_constant *
                  (_constants.time_step /
                   (_constants.space_step * _constants.space_step))),
-          _double_grid{DistributedStructuredGrid<R, NDims>{
-                           _domain_size, (_constants.north + _constants.south +
-                                          _constants.east + _constants.west) /
-                                             R{NDims * 2}},
-                       DistributedStructuredGrid<R, NDims>{
-                           _domain_size, (_constants.north + _constants.south +
-                                          _constants.east + _constants.west) /
-                                             R{NDims * 2}}},
+          _double_grid{
+              DistributedStructuredGrid<R, NDims>{
+                  _constants.domain_size,
+                  std::accumulate(
+                      _constants.dierichlet_boundary_conditions.begin(),
+                      _constants.dierichlet_boundary_conditions.end(), R{0},
+                      [](R sum, auto conds) {
+                          return sum + conds.first + conds.second;
+                      }) /
+                      R{NDims * 2}},
+              DistributedStructuredGrid<R, NDims>{
+                  _constants.domain_size,
+                  std::accumulate(
+                      _constants.dierichlet_boundary_conditions.begin(),
+                      _constants.dierichlet_boundary_conditions.end(), R{0},
+                      [](R sum, auto conds) {
+                          return sum + conds.first + conds.second;
+                      }) /
+                      R{NDims * 2}}},
           _current_grid{false},
           _archive("sim", "temperature", _constants.space_step,
                    _double_grid[_current_grid]) {}
@@ -83,7 +84,7 @@ public:
 
             // Conditionally perform halo exchange / apply boundary condition
             _double_grid[_current_grid].synchronize_halos(
-                _dirichlet_boundary_conditions);
+                _constants.dierichlet_boundary_conditions);
 
             // Solve
             R total_norm_delta{0};

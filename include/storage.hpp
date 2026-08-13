@@ -17,7 +17,8 @@ protected:
 
 public:
     Archive(const std::string &file_prefix, MPI_Comm comm, int rank)
-        : _light_data_filename(file_prefix + ".xmf"),
+        : _rank(rank),
+          _light_data_filename(file_prefix + ".xmf"),
           _heavy_data_filename(file_prefix + ".h5"),
           _heavy_file(_heavy_data_filename.data(), comm) {}
     ~Archive() {

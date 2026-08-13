@@ -33,7 +33,7 @@ private:
         bool is_first;
     };
     // Data and Paritioning
-    std::array<int32_t, NDims> _global_size;
+    std::array<int32_t, NDims> _global_size; // TODO: Make const
     std::array<int32_t, NDims> _local_size;
     std::array<int32_t, NDims> _local_start;
     std::array<int32_t, NDims> _exterior_size;
@@ -222,7 +222,8 @@ public:
     operator=(const DistributedStructuredGrid &) = delete;
     DistributedStructuredGrid(DistributedStructuredGrid &&) = delete;
     DistributedStructuredGrid &operator=(DistributedStructuredGrid &&) = delete;
-    DistributedStructuredGrid(std::span<int, NDims> size, R default_value) {
+    DistributedStructuredGrid(std::span<const int, NDims> size,
+                              R default_value) {
         MPI_Comm_rank(MPI_COMM_WORLD, &_world_rank);
         MPI_Comm_size(MPI_COMM_WORLD, &_world_size);
         std::ranges::copy(size, _global_size.begin());
@@ -265,10 +266,10 @@ public:
         }
     }
     auto inner_coordinates() const {
-        auto [is, js] = _mdarray.extents();
-        return std::views::cartesian_product(
-            std::views::iota(1, is.size() - 1),
-            std::views::iota(1, js.size() - 1));
+        return [&]<std::size_t... I>(std::index_sequence<I...>) {
+            return std::views::cartesian_product(
+                std::views::iota(1, _exterior_size[I] - 1)...);
+        }(std::make_index_sequence<NDims>{});
     }
     auto local_grid() -> boost::multi::array<R, NDims> & { return _mdarray; }
     auto local_grid() const -> const boost::multi::array<R, NDims> & {

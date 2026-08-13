@@ -19,52 +19,9 @@ namespace multi = boost::multi;
 int main(int argc, char *argv[]) {
     MPI_Init(&argc, &argv);
 
-    // Parse CLI args
-    argparse::ArgumentParser program("wacheat");
-    program.add_argument("--output", "-o").default_value("output");
-    program.add_argument("--domain-width", "-w")
-        .scan<'i', int>()
-        .default_value(64);
-    program.add_argument("--domain-height", "-h")
-        .scan<'i', int>()
-        .default_value(64);
-    program.add_argument("--epsilon", "-e")
-        .scan<'f', float>()
-        .default_value(1.f);
-    program.add_argument("--max-iterations", "-i")
-        .scan<'u', unsigned>()
-        .default_value(10'000u);
-    program.add_argument("--checkpoint", "-c")
-        .scan<'u', unsigned>()
-        .default_value(1'000u);
-    program.add_argument("--diffusion-factor", "-a")
-        .scan<'f', float>()
-        .default_value(1.f);
-    program.add_argument("--time-step", "-dt")
-        .scan<'f', float>()
-        .default_value(1.f);
-    program.add_argument("--space-step", "-dx")
-        .scan<'f', float>()
-        .default_value(1.f);
-    program.add_argument("--north", "-N")
-        .scan<'f', float>()
-        .default_value(100.f);
-    program.add_argument("--east", "-E").scan<'f', float>().default_value(0.f);
-    program.add_argument("--west", "-W").scan<'f', float>().default_value(0.f);
-    program.add_argument("--south", "-S")
-        .scan<'f', float>()
-        .default_value(100.f);
-    program.add_argument("--log").default_value("info");
+    // TODO: Parse input file
 
-    try {
-        program.parse_args(argc, argv);
-    } catch (const std::exception &err) {
-        std::println(std::cerr, "{}", err.what());
-        std::cerr << program;
-        std::exit(EXIT_FAILURE);
-    }
-
-    auto output_path{program.get<std::string>("--output")};
+    auto output_path{"output"};
     try {
         std::filesystem::create_directory(output_path);
         std::filesystem::current_path(output_path);
@@ -74,7 +31,7 @@ int main(int argc, char *argv[]) {
     }
 
     spdlog::set_level([&]() {
-        auto level{program.get<std::string>("--log")};
+        std::string level{"trace"};
         if (level == "trace") {
             return spdlog::level::trace;
         } else if (level == "debug") {
@@ -91,36 +48,16 @@ int main(int argc, char *argv[]) {
         return spdlog::level::off;
     }());
 
-    auto max_iterations{program.get<unsigned>("--max-iterations")};
-    auto checkpoint{program.get<unsigned>("--checkpoint")};
-
-    auto diffusion{program.get<float>("--diffusion-factor")};
-    auto time_step{program.get<float>("--time-step")};
-    auto space_step{program.get<float>("--space-step")};
-
-    auto domain_width{program.get<int>("--domain-width")};
-    auto domain_height{program.get<int>("--domain-height")};
-    auto epsilon{program.get<float>("--epsilon")};
-
-    auto north{program.get<float>("--north")};
-    auto east{program.get<float>("--east")};
-    auto west{program.get<float>("--west")};
-    auto south{program.get<float>("--south")};
-
     {
-        auto solver{SpmdFdm2dExplicitHeatEqSolver<float>{{
-            .domain_width = domain_width,
-            .domain_height = domain_height,
-            .diffusion_constant = diffusion,
-            .time_step = time_step,
-            .space_step = space_step,
-            .north = north,
-            .south = south,
-            .east = east,
-            .west = west,
-            .epsilon = epsilon,
-            .max_iterations = max_iterations,
-            .storage_interval = checkpoint,
+        auto solver{SpmdFdm2dExplicitHeatEqSolver<float, 3>{{
+            .domain_size = {64, 64, 64},
+            .diffusion_constant = 0.01,
+            .time_step = 0.01,
+            .space_step = 0.1,
+            .dierichlet_boundary_conditions = {std::pair{0,0},std::pair{100,100}, std::pair{50,50}},
+            .epsilon = 0.0,
+            .max_iterations = 10'000,
+            .storage_interval = 1'000,
         }}};
         solver.run();
     }

@@ -119,6 +119,8 @@ auto parse_config(const pugi::xml_node &sim) ->
             child_value<int>(dimensions, std::format("dim{}", dim));
     }
 
+    config.initial_conditions = child_value<R>(sim, "initial_conditions");
+
     auto boundary_conditions{required_child(sim, "boundary_conditions")};
     for (auto dim : std::views::iota(0, NDims)) {
         auto axis{

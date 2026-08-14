@@ -27,6 +27,8 @@ public:
         R diffusion_constant;
         R time_step;
         R space_step;
+        // Initial Conditions
+        R initial_conditions;
         // Boundary Conditions
         std::array<typename DistributedStructuredGrid<R, NDims>::AxisBoundary,
                    NDims>
@@ -55,23 +57,9 @@ public:
                   (_constants.space_step * _constants.space_step))),
           _double_grid{
               DistributedStructuredGrid<R, NDims>{
-                  _constants.domain_size,
-                  std::accumulate(
-                      _constants.dierichlet_boundary_conditions.begin(),
-                      _constants.dierichlet_boundary_conditions.end(), R{0},
-                      [](R sum, auto conds) {
-                          return sum + conds.first + conds.second;
-                      }) /
-                      R{NDims * 2}},
+                  _constants.domain_size, _constants.boundary_conditions, _constants.initial_conditions},
               DistributedStructuredGrid<R, NDims>{
-                  _constants.domain_size,
-                  std::accumulate(
-                      _constants.dierichlet_boundary_conditions.begin(),
-                      _constants.dierichlet_boundary_conditions.end(), R{0},
-                      [](R sum, auto conds) {
-                          return sum + conds.first + conds.second;
-                      }) /
-                      R{NDims * 2}}},
+                  _constants.domain_size, _constants.boundary_conditions, _constants.initial_conditions}},
           _current_grid{false},
           _archive("sim", "temperature", _constants.space_step,
                    _double_grid[_current_grid]) {}
@@ -85,8 +73,7 @@ public:
             SPDLOG_TRACE("Iteration {}", current_iterations);
 
             // Conditionally perform halo exchange / apply boundary condition
-            _double_grid[_current_grid].synchronize_halos(
-                _constants.dierichlet_boundary_conditions);
+            _double_grid[_current_grid].synchronize_halos();
 
             // Solve
             R total_norm_delta{0};

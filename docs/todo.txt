@@ -29,8 +29,8 @@ Completion
 [X] Input file parser
     [X] Single Template
     [X] Variable Template
-[ ] Neumann Boundary Condition
-[ ] Periodic Boundary Condition
+[X] Neumann Boundary Condition
+[X] Periodic Boundary Condition
 [ ] Arithmetic Expression Initial Conditions
 [ ] Arithmetic Expression Boundary Condition
 [ ] Reasonable Convergence Conditions

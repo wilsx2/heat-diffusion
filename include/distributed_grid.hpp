@@ -202,7 +202,7 @@ private:
         auto apply_boundaries{[&](int axis, bool first) {
             auto axis_boundary{
                 std::get<std::pair<NonPeriodicBoundary<R>, NonPeriodicBoundary<R>>>(axis_boundaries[axis])};
-            auto boundary{[&](){
+            auto boundary{[&]() -> auto & {
                 if (first)
                     return axis_boundary.first;
                 return axis_boundary.second;
@@ -214,24 +214,29 @@ private:
             auto exterior_face{[&]() {
                 if (first) {
                     for (auto dim : std::views::iota(0, NDims)) {
-                        from[dim] = 0;
-                        to[dim] = (dim == axis) ? 1 : _exterior_size[dim];
+                        from[dim] = (dim == axis) ? 0 : 1;
+                        to[dim] =
+                            (dim == axis) ? 1 : _exterior_size[dim] - 1;
                     }
                 } else {
                     for (auto dim : std::views::iota(0, NDims)) {
-                        to[dim] = _exterior_size[dim];
-                        from[dim] = (dim == axis) ? _exterior_size[dim] - 1 : 0;
+                        to[dim] =
+                            (dim == axis) ? _exterior_size[dim]
+                                          : _exterior_size[dim] - 1;
+                        from[dim] =
+                            (dim == axis) ? _exterior_size[dim] - 1 : 1;
                     }
                 }
 
-                return MdView{from, to};
+                return face_view(from, to, std::make_index_sequence<NDims>{});
             }};
 
             if (auto dierichlet =
-                    std::get_if<DierichletBoundary<R>>(&boundary)) {
-                std::ranges::fill(exterior_face.elements(), dierichlet->value);
+                    std::get_if<DierichletBoundary<R>>(&boundary())) {
+                std::ranges::fill(exterior_face().elements(),
+                                  dierichlet->value);
             } else {
-                auto neumann{std::get_if<NeumannBoundary<R>>(&boundary)};
+                auto neumann{std::get_if<NeumannBoundary<R>>(&boundary())};
                 assert(neumann != nullptr);
 
                 auto interior_face{[&]() {
@@ -249,11 +254,11 @@ private:
                         }
                     }
 
-                    return MdView{from, to};
+            return face_view(from, to, std::make_index_sequence<NDims>{});
                 }};
 
-                _neumann_boundaries.emplace_back(neumann, exterior_face,
-                                                 interior_face);
+                _neumann_boundaries.emplace_back(*neumann, exterior_face(),
+                                                 interior_face());
             }
         }};
 
@@ -282,7 +287,7 @@ public:
                      _world_rank);
 
         std::array<int, NDims> periods;
-        for (auto &[axis_boundary, period] :
+        for (auto &&[axis_boundary, period] :
              std::views::zip(global_boundaries, periods)) {
             period = std::get_if<PeriodicBoundary>(&axis_boundary) != nullptr;
         }
@@ -309,10 +314,18 @@ public:
         deinit_requests();
         MPI_Comm_free(&_cart_comm);
     }
-    auto synchronize_halos(const std::array<std::pair<R, R>, NDims> &dirichlet)
+    auto synchronize_halos()
         -> void {
         MPI_Startall(_requests.size(), _requests.data());
-        // TODO: Apply Neumann Boundaries
+        for (auto &neumann : _neumann_boundaries) {
+            // TODO: Bring in OpenMP
+            std::ranges::transform(
+                neumann.interior_face.elements(),
+                neumann.exterior_face.elements().begin(),
+                [delta = neumann.condition.delta](R value) {
+                    return value + delta;
+                });
+        }
         std::array<MPI_Status, _requests.size()> statuses;
         MPI_Waitall(_requests.size(), _requests.data(), statuses.data());
     }

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <span>
 
+#include "boundary.hpp"
 #include "h5raii.hpp"
 #include <H5Fpublic.h>
 #include <H5Ppublic.h>
@@ -24,23 +25,28 @@
 
 template <std::floating_point R, std::ptrdiff_t NDims>
 class DistributedStructuredGrid {
+public:
+    using AxisBoundary =
+        std::variant<std::pair<NonPeriodicBoundary<R>, NonPeriodicBoundary<R>>,
+                     PeriodicBoundary>;
+
 private:
-    using FaceView = decltype(std::declval<boost::multi::array<R, NDims> &>()(
-        boost::multi::index_range{}, boost::multi::index_range{}));
-    struct Face {
-        FaceView view;
-        int dim;
-        bool is_first;
-    };
     // Data and Paritioning
-    std::array<int32_t, NDims> _global_size; // TODO: Make const
+    std::array<int32_t, NDims> _global_size;
     std::array<int32_t, NDims> _local_size;
     std::array<int32_t, NDims> _local_start;
     std::array<int32_t, NDims> _exterior_size;
     boost::multi::array<R, NDims> _mdarray;
-    std::inplace_vector<Face, NDims * 2> _boundary_faces;
 
-    // Cache For H5 I/O
+    // Boundary Condition
+    using MdView = decltype(std::declval<boost::multi::array<R, NDims> &>()(
+        boost::multi::index_range{}, boost::multi::index_range{}));
+    struct FaceNeumannBoundary {
+        NeumannBoundary<R> condition;
+        MdView exterior_face;
+        MdView interior_face;
+    };
+    std::inplace_vector<FaceNeumannBoundary, NDims * 2> _neumann_boundaries;
 
     // MPI Information
     int _world_rank, _world_size;
@@ -56,12 +62,10 @@ private:
     std::array<MPI_Request, NDims * 4> _requests;
 
     // Methods
-    auto init_topology() -> void {
+    auto init_topology(std::span<int, NDims> periods) -> void {
         /// Cartesian grid
         std::fill(_cart_dims.begin(), _cart_dims.end(), 0);
         MPI_Dims_create(_world_size, NDims, _cart_dims.data());
-        std::array<int, NDims> periods;
-        std::fill(periods.begin(), periods.end(), 0);
         MPI_Cart_create(MPI_COMM_WORLD, NDims, _cart_dims.data(),
                         periods.data(), 0, &_cart_comm);
 
@@ -190,29 +194,74 @@ private:
                    std::index_sequence<I...>) {
         return _mdarray(boost::multi::index_range{from[I], to[I]}...);
     }
-    auto set_boundary_faces() -> void {
-        _boundary_faces.clear();
-        for (auto dim : std::views::iota(0, NDims)) {
+    auto
+    set_local_boundaries(std::span<const AxisBoundary, NDims> axis_boundaries)
+        -> void {
+        _neumann_boundaries.clear();
+
+        auto apply_boundaries{[&](int axis, bool first) {
+            auto axis_boundary{
+                std::get<std::pair<NonPeriodicBoundary<R>, NonPeriodicBoundary<R>>>(axis_boundaries[axis])};
+            auto boundary{[&](){
+                if (first)
+                    return axis_boundary.first;
+                return axis_boundary.second;
+            }};
+
             std::array<int, NDims> from;
             std::array<int, NDims> to;
-            if (_cart_neighbors[dim].first == MPI_PROC_NULL) {
-                for (auto odim : std::views::iota(0, NDims)) {
-                    from[odim] = 0;
-                    to[odim] = (odim == dim) ? 1 : _exterior_size[odim];
+
+            auto exterior_face{[&]() {
+                if (first) {
+                    for (auto dim : std::views::iota(0, NDims)) {
+                        from[dim] = 0;
+                        to[dim] = (dim == axis) ? 1 : _exterior_size[dim];
+                    }
+                } else {
+                    for (auto dim : std::views::iota(0, NDims)) {
+                        to[dim] = _exterior_size[dim];
+                        from[dim] = (dim == axis) ? _exterior_size[dim] - 1 : 0;
+                    }
                 }
-                _boundary_faces.push_back(
-                    {face_view(from, to, std::make_index_sequence<NDims>{}),
-                     dim, true});
+
+                return MdView{from, to};
+            }};
+
+            if (auto dierichlet =
+                    std::get_if<DierichletBoundary<R>>(&boundary)) {
+                std::ranges::fill(exterior_face.elements(), dierichlet->value);
+            } else {
+                auto neumann{std::get_if<NeumannBoundary<R>>(&boundary)};
+                assert(neumann != nullptr);
+
+                auto interior_face{[&]() {
+                    if (first) {
+                        for (auto dim : std::views::iota(0, NDims)) {
+                            from[dim] = 1;
+                            to[dim] =
+                                (dim == axis) ? 2 : _exterior_size[dim] - 1;
+                        }
+                    } else {
+                        for (auto dim : std::views::iota(0, NDims)) {
+                            to[dim] = _exterior_size[dim] - 1;
+                            from[dim] =
+                                (dim == axis) ? _exterior_size[dim] - 2 : 1;
+                        }
+                    }
+
+                    return MdView{from, to};
+                }};
+
+                _neumann_boundaries.emplace_back(neumann, exterior_face,
+                                                 interior_face);
             }
-            if (_cart_neighbors[dim].second == MPI_PROC_NULL) {
-                for (auto odim : std::views::iota(0, NDims)) {
-                    to[odim] = _exterior_size[odim];
-                    from[odim] = (odim == dim) ? _exterior_size[odim] - 1 : 0;
-                }
-                _boundary_faces.push_back(
-                    {face_view(from, to, std::make_index_sequence<NDims>{}),
-                     dim, false});
-            }
+        }};
+
+        for (auto dim : std::views::iota(0, NDims)) {
+            if (_cart_neighbors[dim].first == MPI_PROC_NULL)
+                apply_boundaries(dim, true);
+            if (_cart_neighbors[dim].second == MPI_PROC_NULL)
+                apply_boundaries(dim, false);
         }
     }
 
@@ -222,15 +271,22 @@ public:
     operator=(const DistributedStructuredGrid &) = delete;
     DistributedStructuredGrid(DistributedStructuredGrid &&) = delete;
     DistributedStructuredGrid &operator=(DistributedStructuredGrid &&) = delete;
-    DistributedStructuredGrid(std::span<const int, NDims> size,
-                              R default_value) {
+    DistributedStructuredGrid(
+        std::span<const int, NDims> size,
+        std::span<const AxisBoundary, NDims> global_boundaries,
+        R default_value) {
         MPI_Comm_rank(MPI_COMM_WORLD, &_world_rank);
         MPI_Comm_size(MPI_COMM_WORLD, &_world_size);
         std::ranges::copy(size, _global_size.begin());
         SPDLOG_DEBUG("Process {}/{} (rank {})", _world_rank + 1, _world_size,
                      _world_rank);
 
-        init_topology();
+        std::array<int, NDims> periods;
+        for (auto &[axis_boundary, period] :
+             std::views::zip(global_boundaries, periods)) {
+            period = std::get_if<PeriodicBoundary>(&axis_boundary) != nullptr;
+        }
+        init_topology(periods);
 
         std::array<std::ptrdiff_t, NDims> extensions;
         for (auto dim : std::views::iota(0, NDims)) {
@@ -245,7 +301,7 @@ public:
         _mdarray = boost::multi::array<R, NDims>(extents, default_value);
 
         init_transfer_types();
-        set_boundary_faces();
+        set_local_boundaries(global_boundaries);
         init_requests();
     }
     ~DistributedStructuredGrid() {
@@ -256,14 +312,9 @@ public:
     auto synchronize_halos(const std::array<std::pair<R, R>, NDims> &dirichlet)
         -> void {
         MPI_Startall(_requests.size(), _requests.data());
+        // TODO: Apply Neumann Boundaries
         std::array<MPI_Status, _requests.size()> statuses;
         MPI_Waitall(_requests.size(), _requests.data(), statuses.data());
-
-        for (auto &face : _boundary_faces) {
-            auto value{face.is_first ? dirichlet[face.dim].first
-                                     : dirichlet[face.dim].second};
-            std::ranges::fill(face.view.elements(), value);
-        }
     }
     auto inner_coordinates() const {
         return [&]<std::size_t... I>(std::index_sequence<I...>) {
@@ -350,7 +401,7 @@ private:
                 auto origin{geometry.append_child("DataItem")};
                 origin.append_attribute("Dimensions").set_value(NDims);
                 origin.append_attribute("Format").set_value("XML");
-                origin.text().set(ndim_zeros); // TODO: Join NDim zeroes
+                origin.text().set(ndim_zeros);
             }
             {
                 static const std::string ndim_block_sizes(

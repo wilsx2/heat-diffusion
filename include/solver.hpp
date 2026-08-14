@@ -27,8 +27,10 @@ public:
         R diffusion_constant;
         R time_step;
         R space_step;
-        // Cardinal Dirichlet Boundary Conditions
-        std::array<std::pair<R, R>, NDims> dierichlet_boundary_conditions;
+        // Boundary Conditions
+        std::array<typename DistributedStructuredGrid<R, NDims>::AxisBoundary,
+                   NDims>
+            boundary_conditions;
         // Convergence Params
         R epsilon;
         unsigned max_iterations;

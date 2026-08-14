@@ -1,5 +1,7 @@
 #pragma once
 
+#include "boundary.hpp"
+#include "distributed_grid.hpp"
 #include "solver.hpp"
 
 #include <pugixml.hpp>
@@ -8,6 +10,7 @@
 #include <concepts>
 #include <format>
 #include <ranges>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -33,8 +36,8 @@ auto child_value(const pugi::xml_node &node, std::string_view child_name) -> T {
     auto child{required_child(node, child_name)};
     std::string_view text{child.child_value()};
     T value{};
-    auto [ptr, ec]{
-        std::from_chars(text.data(), text.data() + text.size(), value)};
+    auto [ptr,
+          ec]{std::from_chars(text.data(), text.data() + text.size(), value)};
     if (ec != std::errc{} || ptr != text.data() + text.size()) {
         throw ConfigError{std::format(
             "Failed to parse <{}> in <{}>: expected an integer, got \"{}\"",
@@ -48,8 +51,8 @@ auto child_value(const pugi::xml_node &node, std::string_view child_name) -> T {
     auto child{required_child(node, child_name)};
     std::string_view text{child.child_value()};
     T value{};
-    auto [ptr, ec]{
-        std::from_chars(text.data(), text.data() + text.size(), value)};
+    auto [ptr,
+          ec]{std::from_chars(text.data(), text.data() + text.size(), value)};
     if (ec != std::errc{} || ptr != text.data() + text.size()) {
         throw ConfigError{std::format(
             "Failed to parse <{}> in <{}>: expected a number, got \"{}\"",
@@ -64,20 +67,18 @@ auto child_pair(const pugi::xml_node &node, std::string_view child_name)
     auto child{required_child(node, child_name)};
     std::string_view text{child.child_value()};
     auto tokens{text | std::views::split(' ') |
-                std::views::filter([](auto token) {
-                    return !token.empty();
-                })};
+                std::views::filter([](auto token) { return !token.empty(); })};
     R values[2]{};
     auto token_it{tokens.begin()};
     for (auto &value : values) {
         if (token_it == tokens.end()) {
-            throw ConfigError{std::format(
-                "Failed to parse <{}> in <{}>: expected two numbers, got \"{}\"",
-                child_name, node.name(), text)};
+            throw ConfigError{std::format("Failed to parse <{}> in <{}>: "
+                                          "expected two numbers, got \"{}\"",
+                                          child_name, node.name(), text)};
         }
         auto token{*token_it};
-        auto [ptr, ec]{std::from_chars(
-            token.data(), token.data() + token.size(), value)};
+        auto [ptr, ec]{
+            std::from_chars(token.data(), token.data() + token.size(), value)};
         if (ec != std::errc{} || ptr != token.data() + token.size()) {
             throw ConfigError{std::format(
                 "Failed to parse <{}> in <{}>: expected two numbers, got "
@@ -100,8 +101,8 @@ inline auto child_text(const pugi::xml_node &node, std::string_view child_name)
 }
 
 template <std::floating_point R, std::ptrdiff_t NDims>
-auto parse_config(const pugi::xml_node &sim)
-    -> typename SpmdFdm2dExplicitHeatEqSolver<R, NDims>::Configuration {
+auto parse_config(const pugi::xml_node &sim) ->
+    typename SpmdFdm2dExplicitHeatEqSolver<R, NDims>::Configuration {
     using Config =
         typename SpmdFdm2dExplicitHeatEqSolver<R, NDims>::Configuration;
     Config config{};
@@ -120,8 +121,44 @@ auto parse_config(const pugi::xml_node &sim)
 
     auto boundary_conditions{required_child(sim, "boundary_conditions")};
     for (auto dim : std::views::iota(0, NDims)) {
-        config.dierichlet_boundary_conditions[dim] = child_pair<R>(
-            boundary_conditions, std::format("axis{}", dim));
+        auto axis{
+            required_child(boundary_conditions, std::format("axis{}", dim))};
+        std::string_view axis_type{axis.ensure_attribute("type").value()};
+        if (axis_type == "periodic") {
+            config.boundary_conditions[dim] = PeriodicBoundary{};
+            continue;
+        } else {
+            std::pair<NonPeriodicBoundary<R>, NonPeriodicBoundary<R>> faces;
+            for (const std::string_view &name : {"first", "last"}) {
+                auto node{required_child(axis, name)};
+                std::string_view face_type{node.attribute("type").value()};
+                if (face_type == "dierichlet") {
+                    if (name == "first") {
+                        faces.first =
+                            DierichletBoundary<R>{child_value<R>(axis, "first")};
+                    } else if (name == "last") {
+                        faces.second =
+                            DierichletBoundary<R>{child_value<R>(axis, "last")};
+                    } else {
+                        // PANIC!
+                    }
+                } else if (face_type == "neumann") {
+                    if (name == "first") {
+                        faces.first =
+                            NeumannBoundary<R>{child_value<R>(axis, "first")};
+                    } else if (name == "last") {
+                        faces.second =
+                            NeumannBoundary<R>{child_value<R>(axis, "last")};
+                    } else {
+                        // PANIC!
+                    }
+                } else {
+                    // PANIC!
+                }
+            }
+
+            config.boundary_conditions[dim] = faces;
+        }
     }
 
     auto convergence{required_child(sim, "convergence_conditions")};

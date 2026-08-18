@@ -1,11 +1,20 @@
 #pragma once
 #include "distributed_grid.hpp"
+#include "input.hpp"
 #include <cstddef>
 
-template <std::floating_point R, std::ptrdiff_t NDims>
-struct ConstantInitialConditions {
-    R value;
-    auto operator()(DistributedStructuredGrid<R, NDims> &grid) const {
-        grid.fill(value);
+template <typename R>
+class ConstantInitialConditions {
+private:
+    R _value;
+
+public:
+    ConstantInitialConditions() = default;
+    ConstantInitialConditions(std::string_view text) {
+        parse_value<R>(text);
+    }
+    template <typename T>
+    auto operator()(T &structure) const {
+        structure.fill(_value);
     }
 };

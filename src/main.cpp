@@ -3,7 +3,11 @@
 #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
 #endif
 
+#include "boundary.hpp"
+#include "distributed_grid.hpp"
+#include "initial_conditions.hpp"
 #include "input.hpp"
+#include "solver.hpp"
 
 #include <argparse/argparse.hpp>
 #include <mpi.h>
@@ -19,6 +23,131 @@
 #include <string>
 #include <string_view>
 #include <utility>
+
+template <std::floating_point R, std::ptrdiff_t NDims,
+          typename InitialConditions>
+auto parse_config(const pugi::xml_node &sim) ->
+    typename SpmdFdmExplicitHeatEqSolver<R, NDims,
+                                         InitialConditions>::Configuration {
+    using Config =
+        typename SpmdFdmExplicitHeatEqSolver<R, NDims,
+                                             InitialConditions>::Configuration;
+    Config config{};
+
+    config.diffusion_constant = child_value<R>(sim, "diffusion");
+    config.storage_interval = child_value<unsigned>(sim, "checkpoint");
+
+    auto grid{required_child(sim, "discretization")};
+    config.time_step = child_value<R>(grid, "time_step");
+    config.space_step = child_value<R>(grid, "cell_size");
+    auto dimensions{required_child(grid, "dimensions")};
+    for (auto dim : std::views::iota(0, NDims)) {
+        config.domain_size[dim] =
+            child_value<int>(dimensions, std::format("dim{}", dim));
+    }
+
+    // TODO: Construct from string
+    config.initial_conditions =
+        InitialConditions{child_text(sim, "initial_conditions")};
+
+    auto boundary_conditions{required_child(sim, "boundary_conditions")};
+    for (auto dim : std::views::iota(0, NDims)) {
+        auto axis{
+            required_child(boundary_conditions, std::format("axis{}", dim))};
+        std::string_view axis_type{axis.ensure_attribute("type").value()};
+        if (axis_type == "periodic") {
+            config.boundary_conditions[dim] = PeriodicBoundary{};
+            continue;
+        } else {
+            std::pair<NonPeriodicBoundary<R>, NonPeriodicBoundary<R>> faces;
+            for (const std::string_view &name : {"first", "last"}) {
+                auto node{required_child(axis, name)};
+                std::string_view face_type{node.attribute("type").value()};
+                if (face_type == "dierichlet") {
+                    if (name == "first") {
+                        faces.first = DierichletBoundary<R>{
+                            child_value<R>(axis, "first")};
+                    } else if (name == "last") {
+                        faces.second =
+                            DierichletBoundary<R>{child_value<R>(axis, "last")};
+                    } else {
+                        // PANIC!
+                    }
+                } else if (face_type == "neumann") {
+                    if (name == "first") {
+                        faces.first =
+                            NeumannBoundary<R>{child_value<R>(axis, "first")};
+                    } else if (name == "last") {
+                        faces.second =
+                            NeumannBoundary<R>{child_value<R>(axis, "last")};
+                    } else {
+                        // PANIC!
+                    }
+                } else {
+                    // PANIC!
+                }
+            }
+
+            config.boundary_conditions[dim] = faces;
+        }
+    }
+
+    auto convergence{required_child(sim, "convergence_conditions")};
+    config.max_iterations =
+        child_value<unsigned>(convergence, "iterations_under");
+    config.epsilon = child_value<R>(convergence, "avg_delta_over");
+
+    return config;
+}
+
+template <std::floating_point R, std::ptrdiff_t NDims,
+          typename InitialConditions>
+auto solve(const pugi::xml_node &sim) -> void {
+    SpmdFdmExplicitHeatEqSolver<R, NDims, InitialConditions> solver{
+        parse_config<R, NDims, InitialConditions>(sim)};
+    solver.run();
+}
+
+template <std::floating_point R, std::ptrdiff_t NDims>
+auto solve_with_ic(const pugi::xml_node &sim) -> void {
+    solve<R, NDims, ConstantInitialConditions<R>>(sim);
+}
+
+template <std::floating_point R>
+auto dispatch_dimensions(const pugi::xml_node &sim) -> void {
+    auto dimensions{child_value<int>(sim, "dimensions")};
+
+    if (dimensions == 2) {
+        return solve_with_ic<R, 2>(sim);
+    }
+    if (dimensions == 3) {
+        return solve_with_ic<R, 3>(sim);
+    }
+    throw ConfigError{
+        std::format("Unsupported dimension \"{}\", only 2 and 3 are supported",
+                    dimensions)};
+}
+
+inline auto static_dispatch_solve(const pugi::xml_node &sim) -> void {
+    if (std::string_view sim_type{sim.attribute("type").value()};
+        sim_type != "heat") {
+        throw ConfigError{
+            std::format("Non-heat simulation types not supported (\"{}\" "
+                        "provided)",
+                        sim_type)};
+    }
+    auto precision{child_text(sim, "precision")};
+
+    if (precision == "float") {
+        dispatch_dimensions<float>(sim);
+    }
+    if (precision == "double") {
+        dispatch_dimensions<double>(sim);
+    }
+    throw ConfigError{std::format("Unsupported precision type \"{}\", only "
+                                  "float and double are supported",
+                                  precision)};
+}
 
 int main(int argc, char *argv[]) {
     MPI_Init(&argc, &argv);
@@ -83,21 +212,7 @@ int main(int argc, char *argv[]) {
         }
 
         auto sim{doc.child("simulation")};
-        if (std::string_view sim_type{sim.attribute("type").value()};
-            sim_type != "heat") {
-            throw ConfigError{
-                std::format("Non-heat simulation types not supported (\"{}\" "
-                            "provided)",
-                            sim_type)};
-        }
-
-        auto precision{child_text(sim, "precision")};
-        auto dimensions{child_value<int>(sim, "dimensions")};
-        if (!static_dispatch_solve(sim, precision, dimensions)) {
-            throw ConfigError{
-                std::format("Unsupported precision/dimensions: {}/{}D",
-                            precision, dimensions)};
-        }
+        static_dispatch_solve(sim);
     } catch (const std::exception &err) {
         SPDLOG_ERROR("{}", err.what());
         MPI_Finalize();

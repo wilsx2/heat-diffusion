@@ -20,14 +20,6 @@
 #include <string_view>
 #include <utility>
 
-static const std::map<std::pair<std::string_view, int>,
-                      std::function<void(const pugi::xml_node &)>> solvers{
-    {{"float", 2}, [](const auto &sim) { solve<float, 2>(sim); }},
-    {{"float", 3}, [](const auto &sim) { solve<float, 3>(sim); }},
-    {{"double", 2}, [](const auto &sim) { solve<double, 2>(sim); }},
-    {{"double", 3}, [](const auto &sim) { solve<double, 3>(sim); }},
-};
-
 int main(int argc, char *argv[]) {
     MPI_Init(&argc, &argv);
 
@@ -85,9 +77,9 @@ int main(int argc, char *argv[]) {
         std::ifstream stream{input_file};
         pugi::xml_parse_result result = doc.load(stream);
         if (!result) {
-            throw ConfigError{std::format(
-                "Failed to load input file \"{}\": {}", input_file,
-                result.description())};
+            throw ConfigError{
+                std::format("Failed to load input file \"{}\": {}", input_file,
+                            result.description())};
         }
 
         auto sim{doc.child("simulation")};
@@ -101,13 +93,10 @@ int main(int argc, char *argv[]) {
 
         auto precision{child_text(sim, "precision")};
         auto dimensions{child_value<int>(sim, "dimensions")};
-        if (auto entry{solvers.find({precision, dimensions})};
-            entry != solvers.end()) {
-            entry->second(sim);
-        } else {
-            throw ConfigError{std::format(
-                "Unsupported precision/dimensions: {}/{}D", precision,
-                dimensions)};
+        if (!static_dispatch_solve(sim, precision, dimensions)) {
+            throw ConfigError{
+                std::format("Unsupported precision/dimensions: {}/{}D",
+                            precision, dimensions)};
         }
     } catch (const std::exception &err) {
         SPDLOG_ERROR("{}", err.what());

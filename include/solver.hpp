@@ -18,8 +18,10 @@
 #include <utility>
 #include <vector>
 
-template <std::floating_point R, std::ptrdiff_t NDims>
-class SpmdFdm2dExplicitHeatEqSolver {
+template <
+    std::floating_point R, std::ptrdiff_t NDims,
+    std::invocable<DistributedStructuredGrid<R, NDims> &> InitialConditions>
+class SpmdFdmExplicitHeatEqSolver {
 public:
     struct Configuration {
         std::array<int, NDims> domain_size;
@@ -28,7 +30,7 @@ public:
         R time_step;
         R space_step;
         // Initial Conditions
-        R initial_conditions;
+        InitialConditions initial_conditions;
         // Boundary Conditions
         std::array<typename DistributedStructuredGrid<R, NDims>::AxisBoundary,
                    NDims>
@@ -44,25 +46,27 @@ private:
     const Configuration _constants;
     R _gamma;
     std::array<DistributedStructuredGrid<R, NDims>, 2> _double_grid;
-    bool _current_grid;
+    bool _grid_idx;
 
     DSGArchive<R, NDims> _archive;
 
 public:
-    SpmdFdm2dExplicitHeatEqSolver() = delete;
-    SpmdFdm2dExplicitHeatEqSolver(Configuration &&config)
+    SpmdFdmExplicitHeatEqSolver() = delete;
+    SpmdFdmExplicitHeatEqSolver(Configuration &&config)
         : _constants(config),
           _gamma(_constants.diffusion_constant *
                  (_constants.time_step /
                   (_constants.space_step * _constants.space_step))),
           _double_grid{
               DistributedStructuredGrid<R, NDims>{
-                  _constants.domain_size, _constants.boundary_conditions, _constants.initial_conditions},
+                  _constants.domain_size, _constants.boundary_conditions},
               DistributedStructuredGrid<R, NDims>{
-                  _constants.domain_size, _constants.boundary_conditions, _constants.initial_conditions}},
-          _current_grid{false},
+                  _constants.domain_size, _constants.boundary_conditions}},
+          _grid_idx{false},
           _archive("sim", "temperature", _constants.space_step,
-                   _double_grid[_current_grid]) {}
+                   _double_grid[_grid_idx]) {
+        _constants.initial_conditions(_double_grid[_grid_idx]);
+    }
     auto run() -> void {
         SPDLOG_TRACE("run()");
         auto current_iterations{0u};
@@ -73,14 +77,13 @@ public:
             SPDLOG_TRACE("Iteration {}", current_iterations);
 
             // Conditionally perform halo exchange / apply boundary condition
-            _double_grid[_current_grid].synchronize_halos();
+            _double_grid[_grid_idx].synchronize_halos();
 
             // Solve
             R total_norm_delta{0};
-            auto &curr{_double_grid[_current_grid].local_grid()};
-            auto &next{_double_grid[!_current_grid].local_grid()};
-            auto inner_coordinates{
-                _double_grid[_current_grid].inner_coordinates()};
+            auto &curr{_double_grid[_grid_idx].local_grid()};
+            auto &next{_double_grid[!_grid_idx].local_grid()};
+            auto inner_coordinates{_double_grid[_grid_idx].inner_coordinates()};
 #pragma omp parallel for reduction(+ : total_norm_delta)
             for (auto idx : inner_coordinates) {
                 constexpr auto NumNeighbors{NDims * 2};
@@ -105,12 +108,12 @@ public:
                                 static_cast<R>(inner_coordinates.size())};
 
             // Swap roles of current and next grids
-            _current_grid = !_current_grid;
+            _grid_idx = !_grid_idx;
 
             // Save
             if (current_iterations % _constants.storage_interval == 0) {
                 _archive.append_state(
-                    _double_grid[_current_grid], current_iterations,
+                    _double_grid[_grid_idx], current_iterations,
                     current_iterations * _constants.time_step);
             }
 
@@ -120,8 +123,7 @@ public:
             ++current_iterations;
         }
         if ((current_iterations - 1) % _constants.storage_interval != 0) {
-            _archive.append_state(_double_grid[_current_grid],
-                                  current_iterations,
+            _archive.append_state(_double_grid[_grid_idx], current_iterations,
                                   current_iterations * _constants.time_step);
         }
     }

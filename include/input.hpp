@@ -2,8 +2,10 @@
 
 #include "boundary.hpp"
 #include "distributed_grid.hpp"
+#include "initial_conditions.hpp"
 #include "solver.hpp"
 
+#include <cstddef>
 #include <pugixml.hpp>
 
 #include <charconv>
@@ -100,11 +102,14 @@ inline auto child_text(const pugi::xml_node &node, std::string_view child_name)
     return required_child(node, child_name).child_value();
 }
 
-template <std::floating_point R, std::ptrdiff_t NDims>
+template <std::floating_point R, std::ptrdiff_t NDims,
+          typename InitialConditions>
 auto parse_config(const pugi::xml_node &sim) ->
-    typename SpmdFdm2dExplicitHeatEqSolver<R, NDims>::Configuration {
+    typename SpmdFdmExplicitHeatEqSolver<R, NDims,
+                                         InitialConditions>::Configuration {
     using Config =
-        typename SpmdFdm2dExplicitHeatEqSolver<R, NDims>::Configuration;
+        typename SpmdFdmExplicitHeatEqSolver<R, NDims,
+                                             InitialConditions>::Configuration;
     Config config{};
 
     config.diffusion_constant = child_value<R>(sim, "diffusion");
@@ -119,7 +124,9 @@ auto parse_config(const pugi::xml_node &sim) ->
             child_value<int>(dimensions, std::format("dim{}", dim));
     }
 
-    config.initial_conditions = child_value<R>(sim, "initial_conditions");
+    // TODO: Construct from string
+    config.initial_conditions =
+        InitialConditions{child_value<R>(sim, "initial_conditions")};
 
     auto boundary_conditions{required_child(sim, "boundary_conditions")};
     for (auto dim : std::views::iota(0, NDims)) {
@@ -136,8 +143,8 @@ auto parse_config(const pugi::xml_node &sim) ->
                 std::string_view face_type{node.attribute("type").value()};
                 if (face_type == "dierichlet") {
                     if (name == "first") {
-                        faces.first =
-                            DierichletBoundary<R>{child_value<R>(axis, "first")};
+                        faces.first = DierichletBoundary<R>{
+                            child_value<R>(axis, "first")};
                     } else if (name == "last") {
                         faces.second =
                             DierichletBoundary<R>{child_value<R>(axis, "last")};
@@ -171,8 +178,40 @@ auto parse_config(const pugi::xml_node &sim) ->
     return config;
 }
 
-template <std::floating_point R, std::ptrdiff_t NDims>
+template <std::floating_point R, std::ptrdiff_t NDims,
+          typename InitialConditions>
 auto solve(const pugi::xml_node &sim) -> void {
-    SpmdFdm2dExplicitHeatEqSolver<R, NDims> solver{parse_config<R, NDims>(sim)};
+    SpmdFdmExplicitHeatEqSolver<R, NDims, InitialConditions> solver{
+        parse_config<R, NDims, InitialConditions>(sim)};
     solver.run();
+}
+
+template <std::floating_point R, std::ptrdiff_t NDims>
+auto solve_with_ic(const pugi::xml_node &sim) -> bool {
+    solve<R, NDims, ConstantInitialConditions<R, NDims>>(sim);
+    return true;
+}
+
+template <std::floating_point R>
+auto dispatch_dimensions(const pugi::xml_node &sim,
+                         std::ptrdiff_t dimensions) -> bool {
+    if (dimensions == 2) {
+        return solve_with_ic<R, 2>(sim);
+    }
+    if (dimensions == 3) {
+        return solve_with_ic<R, 3>(sim);
+    }
+    return false;
+}
+
+inline auto static_dispatch_solve(const pugi::xml_node &sim,
+                                  std::string precision,
+                                  std::ptrdiff_t dimensions) -> bool {
+    if (precision == "float") {
+        return dispatch_dimensions<float>(sim, dimensions);
+    }
+    if (precision == "double") {
+        return dispatch_dimensions<double>(sim, dimensions);
+    }
+    return false;
 }

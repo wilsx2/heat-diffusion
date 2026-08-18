@@ -29,6 +29,8 @@ public:
     using AxisBoundary =
         std::variant<std::pair<NonPeriodicBoundary<R>, NonPeriodicBoundary<R>>,
                      PeriodicBoundary>;
+    using Subarray = decltype(std::declval<boost::multi::array<R, NDims> &>()(
+        boost::multi::index_range{}, boost::multi::index_range{}));
 
 private:
     // Data and Paritioning
@@ -37,14 +39,13 @@ private:
     std::array<int32_t, NDims> _local_start;
     std::array<int32_t, NDims> _exterior_size;
     boost::multi::array<R, NDims> _mdarray;
+    Subarray _inner_subarray;
 
     // Boundary Condition
-    using MdView = decltype(std::declval<boost::multi::array<R, NDims> &>()(
-        boost::multi::index_range{}, boost::multi::index_range{}));
     struct FaceNeumannBoundary {
         NeumannBoundary<R> condition;
-        MdView exterior_face;
-        MdView interior_face;
+        Subarray exterior_face;
+        Subarray interior_face;
     };
     std::inplace_vector<FaceNeumannBoundary, NDims * 2> _neumann_boundaries;
 
@@ -190,7 +191,7 @@ private:
         }
     }
     template <std::size_t... I>
-    auto face_view(std::array<int, NDims> from, std::array<int, NDims> to,
+    auto create_subarray(std::array<int, NDims> from, std::array<int, NDims> to,
                    std::index_sequence<I...>) {
         return _mdarray(boost::multi::index_range{from[I], to[I]}...);
     }
@@ -200,8 +201,9 @@ private:
         _neumann_boundaries.clear();
 
         auto apply_boundaries{[&](int axis, bool first) {
-            auto axis_boundary{
-                std::get<std::pair<NonPeriodicBoundary<R>, NonPeriodicBoundary<R>>>(axis_boundaries[axis])};
+            auto axis_boundary{std::get<
+                std::pair<NonPeriodicBoundary<R>, NonPeriodicBoundary<R>>>(
+                axis_boundaries[axis])};
             auto boundary{[&]() -> auto & {
                 if (first)
                     return axis_boundary.first;
@@ -215,20 +217,17 @@ private:
                 if (first) {
                     for (auto dim : std::views::iota(0, NDims)) {
                         from[dim] = (dim == axis) ? 0 : 1;
-                        to[dim] =
-                            (dim == axis) ? 1 : _exterior_size[dim] - 1;
+                        to[dim] = (dim == axis) ? 1 : _exterior_size[dim] - 1;
                     }
                 } else {
                     for (auto dim : std::views::iota(0, NDims)) {
-                        to[dim] =
-                            (dim == axis) ? _exterior_size[dim]
-                                          : _exterior_size[dim] - 1;
-                        from[dim] =
-                            (dim == axis) ? _exterior_size[dim] - 1 : 1;
+                        to[dim] = (dim == axis) ? _exterior_size[dim]
+                                                : _exterior_size[dim] - 1;
+                        from[dim] = (dim == axis) ? _exterior_size[dim] - 1 : 1;
                     }
                 }
 
-                return face_view(from, to, std::make_index_sequence<NDims>{});
+                return create_subarray(from, to, std::make_index_sequence<NDims>{});
             }};
 
             if (auto dierichlet =
@@ -254,7 +253,8 @@ private:
                         }
                     }
 
-            return face_view(from, to, std::make_index_sequence<NDims>{});
+                    return create_subarray(from, to,
+                                     std::make_index_sequence<NDims>{});
                 }};
 
                 _neumann_boundaries.emplace_back(*neumann, exterior_face(),
@@ -279,7 +279,7 @@ public:
     DistributedStructuredGrid(
         std::span<const int, NDims> size,
         std::span<const AxisBoundary, NDims> global_boundaries,
-        R default_value) {
+        R default_value = 0) {
         MPI_Comm_rank(MPI_COMM_WORLD, &_world_rank);
         MPI_Comm_size(MPI_COMM_WORLD, &_world_size);
         std::ranges::copy(size, _global_size.begin());
@@ -304,6 +304,14 @@ public:
             },
             extensions)};
         _mdarray = boost::multi::array<R, NDims>(extents, default_value);
+        std::array<int, NDims> inner_from;
+        std::array<int, NDims> inner_to;
+        for (auto dim : std::views::iota(0, NDims)) {
+            inner_from[dim] = 1;
+            inner_to[dim] = _local_size[dim] + 1;
+        }
+        _inner_subarray = create_subarray(inner_from, inner_to,
+                                          std::make_index_sequence<NDims>{});
 
         init_transfer_types();
         set_local_boundaries(global_boundaries);
@@ -314,17 +322,15 @@ public:
         deinit_requests();
         MPI_Comm_free(&_cart_comm);
     }
-    auto synchronize_halos()
-        -> void {
+    auto synchronize_halos() -> void {
         MPI_Startall(_requests.size(), _requests.data());
         for (auto &neumann : _neumann_boundaries) {
             // TODO: Bring in OpenMP
-            std::ranges::transform(
-                neumann.interior_face.elements(),
-                neumann.exterior_face.elements().begin(),
-                [delta = neumann.condition.delta](R value) {
-                    return value + delta;
-                });
+            std::ranges::transform(neumann.interior_face.elements(),
+                                   neumann.exterior_face.elements().begin(),
+                                   [delta = neumann.condition.delta](R value) {
+                                       return value + delta;
+                                   });
         }
         std::array<MPI_Status, _requests.size()> statuses;
         MPI_Waitall(_requests.size(), _requests.data(), statuses.data());
@@ -334,6 +340,9 @@ public:
             return std::views::cartesian_product(
                 std::views::iota(1, _exterior_size[I] - 1)...);
         }(std::make_index_sequence<NDims>{});
+    }
+    auto fill(R value) {
+        std::ranges::fill(_inner_subarray.elements(), value);
     }
     auto local_grid() -> boost::multi::array<R, NDims> & { return _mdarray; }
     auto local_grid() const -> const boost::multi::array<R, NDims> & {

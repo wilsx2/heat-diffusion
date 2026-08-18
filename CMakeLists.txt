@@ -67,6 +67,14 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/p-ranav/argparse.git
 )
 FetchContent_MakeAvailable(argparse)
+FetchContent_Declare(
+    exprtk
+    GIT_REPOSITORY https://github.com/ArashPartow/exprtk.git
+    GIT_TAG        1e4a80b
+)
+FetchContent_MakeAvailable(exprtk)
+add_library(exprtk INTERFACE)
+target_include_directories(exprtk INTERFACE ${exprtk_SOURCE_DIR})
 
 # Application
 add_executable(wacheat
@@ -84,4 +92,5 @@ target_link_libraries(wacheat PUBLIC
     argparse
     multi
     spdlog
+    exprtk
 )

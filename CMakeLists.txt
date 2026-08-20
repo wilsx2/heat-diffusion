@@ -79,10 +79,15 @@ target_include_directories(exprtk INTERFACE ${exprtk_SOURCE_DIR})
 # Application
 add_executable(wacheat
     src/main.cpp
+    src/distributed_grid.cpp
+    src/dsg_archive.cpp
+    src/initial_conditions.cpp
+    src/solver.cpp
 )
 target_include_directories(wacheat PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+target_precompile_headers(wacheat PRIVATE src/pch.hpp)
 target_link_libraries(wacheat PUBLIC
     OpenMP::OpenMP_CXX
     MPI::MPI_CXX
@@ -94,3 +99,4 @@ target_link_libraries(wacheat PUBLIC
     spdlog
     exprtk
 )
+target_link_options(wacheat PRIVATE -Wl,-z,muldefs)

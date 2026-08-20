@@ -31,7 +31,7 @@ Completion
     [X] Variable Template
 [X] Neumann Boundary Condition
 [X] Periodic Boundary Condition
-[ ] Arithmetic Expression Initial Conditions
+[X] Arithmetic Expression Initial Conditions
 [ ] Arithmetic Expression Convergence Conditions
 [ ] Move boundary conditions outside of DSG
 [ ] Arithmetic Expression Boundary Condition

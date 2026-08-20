@@ -1,7 +1,4 @@
 #include <filesystem>
-#ifndef SPDLOG_ACTIVE_LEVEL
-#define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
-#endif
 
 #include "boundary.hpp"
 #include "distributed_grid.hpp"
@@ -16,13 +13,9 @@
 #include <cstdlib>
 #include <format>
 #include <fstream>
-#include <functional>
 #include <iostream>
-#include <map>
 #include <print>
-#include <string>
 #include <string_view>
-#include <utility>
 
 template <std::floating_point R, std::ptrdiff_t NDims,
           typename InitialConditions>
@@ -46,7 +39,6 @@ auto parse_config(const pugi::xml_node &sim) ->
             child_value<int>(dimensions, std::format("dim{}", dim));
     }
 
-    // TODO: Construct from string
     config.initial_conditions =
         InitialConditions{child_text(sim, "initial_conditions")};
 
@@ -70,8 +62,6 @@ auto parse_config(const pugi::xml_node &sim) ->
                     } else if (name == "last") {
                         faces.second =
                             DierichletBoundary<R>{child_value<R>(axis, "last")};
-                    } else {
-                        // PANIC!
                     }
                 } else if (face_type == "neumann") {
                     if (name == "first") {
@@ -80,11 +70,12 @@ auto parse_config(const pugi::xml_node &sim) ->
                     } else if (name == "last") {
                         faces.second =
                             NeumannBoundary<R>{child_value<R>(axis, "last")};
-                    } else {
-                        // PANIC!
                     }
                 } else {
-                    // PANIC!
+                    throw ConfigError{
+                        std::format("Boundary type \"{}\" not recognized, only "
+                                    "\"dierichlet\" and \"neumann\" are valid.",
+                                    face_type)};
                 }
             }
 
@@ -97,6 +88,7 @@ auto parse_config(const pugi::xml_node &sim) ->
         child_value<unsigned>(convergence, "iterations_under");
     config.epsilon = child_value<R>(convergence, "avg_delta_over");
 
+    SPDLOG_TRACE(std::format("XML input file parsed"));
     return config;
 }
 
@@ -110,7 +102,17 @@ auto solve(const pugi::xml_node &sim) -> void {
 
 template <std::floating_point R, std::ptrdiff_t NDims>
 auto solve_with_ic(const pugi::xml_node &sim) -> void {
-    solve<R, NDims, ConstantInitialConditions<R>>(sim);
+    auto ic_type{child_attribute_text(sim, "initial_conditions", "type")};
+    if (ic_type == "constant") {
+        return solve<R, NDims, ConstantInitialConditions<R>>(sim);
+    } else if (ic_type == "expr") {
+        return solve<R, NDims, ExpressionInitialConditions<R>>(sim);
+    }
+
+    throw ConfigError{
+        std::format("Unsupported initial condition type \"{}\", only "
+                    "\"constant\" \"expression\" are supported",
+                    ic_type)};
 }
 
 template <std::floating_point R>
@@ -139,10 +141,10 @@ inline auto static_dispatch_solve(const pugi::xml_node &sim) -> void {
     auto precision{child_text(sim, "precision")};
 
     if (precision == "float") {
-        dispatch_dimensions<float>(sim);
+        return dispatch_dimensions<float>(sim);
     }
     if (precision == "double") {
-        dispatch_dimensions<double>(sim);
+        return dispatch_dimensions<double>(sim);
     }
     throw ConfigError{std::format("Unsupported precision type \"{}\", only "
                                   "float and double are supported",
@@ -150,8 +152,6 @@ inline auto static_dispatch_solve(const pugi::xml_node &sim) -> void {
 }
 
 int main(int argc, char *argv[]) {
-    MPI_Init(&argc, &argv);
-
     argparse::ArgumentParser program("wac-heat");
 
     program.add_argument("input")
@@ -168,7 +168,6 @@ int main(int argc, char *argv[]) {
     } catch (const std::exception &err) {
         std::cerr << err.what() << std::endl;
         std::cerr << program;
-        MPI_Finalize();
         return EXIT_FAILURE;
     }
 
@@ -178,7 +177,6 @@ int main(int argc, char *argv[]) {
         std::filesystem::current_path(output_path);
     } catch (const std::exception &err) {
         std::print("Directory '{}' failed to create or enter", output_path);
-        MPI_Finalize();
         return EXIT_FAILURE;
     }
 
@@ -200,9 +198,14 @@ int main(int argc, char *argv[]) {
         return spdlog::level::off;
     }());
 
+    SPDLOG_TRACE("Initializing MPI...");
+    MPI_Init(&argc, &argv);
+    SPDLOG_TRACE("Initialized MPI.");
+
     try {
-        pugi::xml_document doc;
         auto input_file{program.get<std::string>("input")};
+        SPDLOG_TRACE(std::format("Parsing XML input file {}...", input_file));
+        pugi::xml_document doc;
         std::ifstream stream{input_file};
         pugi::xml_parse_result result = doc.load(stream);
         if (!result) {

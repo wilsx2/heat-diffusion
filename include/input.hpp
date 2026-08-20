@@ -39,11 +39,28 @@ auto parse_value(std::string_view text) -> T {
     return value;
 }
 
+inline auto child_attribute_text(const pugi::xml_node &node,
+                                 std::string_view child_name,
+                                 std::string_view attribute)
+    -> std::string_view {
+    return required_child(node, child_name).attribute(attribute).as_string();
+}
+
+template <typename T>
+auto child_attribute_value(const pugi::xml_node &node,
+                           std::string_view child_name,
+                           std::string_view attribute) -> T {
+    return parse_value<T>(child_attribute_text(node, child_name, attribute));
+}
+
+inline auto child_text(const pugi::xml_node &node, std::string_view child_name)
+    -> std::string_view {
+    return required_child(node, child_name).child_value();
+}
+
 template <typename T>
 auto child_value(const pugi::xml_node &node, std::string_view child_name) -> T {
-    auto child{required_child(node, child_name)};
-    std::string_view text{child.child_value()};
-    return parse_value<T>(text);
+    return parse_value<T>(child_text(node, child_name));
 }
 
 template <std::floating_point R>
@@ -71,9 +88,4 @@ auto child_pair(const pugi::xml_node &node, std::string_view child_name)
             child_name, node.name(), text)};
     }
     return {values[0], values[1]};
-}
-
-inline auto child_text(const pugi::xml_node &node, std::string_view child_name)
-    -> std::string {
-    return required_child(node, child_name).child_value();
 }

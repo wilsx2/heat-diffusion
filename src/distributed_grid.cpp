@@ -71,8 +71,7 @@ auto DistributedStructuredGrid<R, NDims>::init_transfer_types() -> void {
             if (dim == odim) {
                 exterior_face_starts.first[odim] = 0;
                 interior_face_starts.first[odim] = 1;
-                exterior_face_starts.second[odim] =
-                    _exterior_size[odim] - 1;
+                exterior_face_starts.second[odim] = _exterior_size[odim] - 1;
                 interior_face_starts.second[odim] = _local_size[odim];
                 exterior_face_subsizes[odim] = 1;
                 interior_face_subsizes[odim] = 1;
@@ -162,9 +161,9 @@ auto DistributedStructuredGrid<R, NDims>::set_local_boundaries(
     _neumann_boundaries.clear();
 
     auto apply_boundaries{[&](int axis, bool first) {
-        auto axis_boundary{std::get<
-            std::pair<NonPeriodicBoundary<R>, NonPeriodicBoundary<R>>>(
-            axis_boundaries[axis])};
+        auto axis_boundary{
+            std::get<std::pair<NonPeriodicBoundary<R>, NonPeriodicBoundary<R>>>(
+                axis_boundaries[axis])};
         auto boundary{[&]() -> auto & {
             if (first)
                 return axis_boundary.first;
@@ -191,8 +190,7 @@ auto DistributedStructuredGrid<R, NDims>::set_local_boundaries(
             return create_subarray(from, to, std::make_index_sequence<NDims>{});
         }};
 
-        if (auto dierichlet =
-                std::get_if<DierichletBoundary<R>>(&boundary())) {
+        if (auto dierichlet = std::get_if<DierichletBoundary<R>>(&boundary())) {
             std::ranges::fill(exterior_face().elements(), dierichlet->value);
         } else {
             auto neumann{std::get_if<NeumannBoundary<R>>(&boundary())};
@@ -202,19 +200,17 @@ auto DistributedStructuredGrid<R, NDims>::set_local_boundaries(
                 if (first) {
                     for (auto dim : std::views::iota(0, NDims)) {
                         from[dim] = 1;
-                        to[dim] =
-                            (dim == axis) ? 2 : _exterior_size[dim] - 1;
+                        to[dim] = (dim == axis) ? 2 : _exterior_size[dim] - 1;
                     }
                 } else {
                     for (auto dim : std::views::iota(0, NDims)) {
                         to[dim] = _exterior_size[dim] - 1;
-                        from[dim] =
-                            (dim == axis) ? _exterior_size[dim] - 2 : 1;
+                        from[dim] = (dim == axis) ? _exterior_size[dim] - 2 : 1;
                     }
                 }
 
                 return create_subarray(from, to,
-                                 std::make_index_sequence<NDims>{});
+                                       std::make_index_sequence<NDims>{});
             }};
 
             _neumann_boundaries.emplace_back(*neumann, exterior_face(),
@@ -233,7 +229,9 @@ auto DistributedStructuredGrid<R, NDims>::set_local_boundaries(
 template <std::floating_point R, std::ptrdiff_t NDims>
 DistributedStructuredGrid<R, NDims>::DistributedStructuredGrid(
     std::span<const int, NDims> size,
-    std::span<const AxisBoundary, NDims> global_boundaries, R default_value) {
+    std::span<const AxisBoundary, NDims> global_boundaries, R cell_size,
+    R default_value)
+    : _cell_size(cell_size) {
     MPI_Comm_rank(MPI_COMM_WORLD, &_world_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &_world_size);
     std::ranges::copy(size, _global_size.begin());
@@ -264,8 +262,8 @@ DistributedStructuredGrid<R, NDims>::DistributedStructuredGrid(
         inner_from[dim] = 1;
         inner_to[dim] = _local_size[dim] + 1;
     }
-    _inner_subarray =
-        create_subarray(inner_from, inner_to, std::make_index_sequence<NDims>{});
+    _inner_subarray = create_subarray(inner_from, inner_to,
+                                      std::make_index_sequence<NDims>{});
 
     init_transfer_types();
     set_local_boundaries(global_boundaries);

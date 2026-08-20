@@ -42,7 +42,8 @@ public:
             static constexpr auto DimSeq{std::make_index_sequence<NDims>{}};
             template for (constexpr auto D : DimSeq) {
                 std::get<D>(_coordinate) =
-                    static_cast<R>(std::get<D>(coordinate));
+                    static_cast<R>(std::get<D>(coordinate)) *
+                    domain.cell_size();
             }
             grid.apply(coordinate) = _expression.value();
         }

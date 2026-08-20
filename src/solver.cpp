@@ -18,14 +18,14 @@ SpmdFdmExplicitHeatEqSolver<R, NDims, InitialConditions>::
       _gamma(_constants.diffusion_constant *
              (_constants.time_step /
               (_constants.space_step * _constants.space_step))),
-      _double_grid{
-          DistributedStructuredGrid<R, NDims>{
-              _constants.domain_size, _constants.boundary_conditions},
-          DistributedStructuredGrid<R, NDims>{
-              _constants.domain_size, _constants.boundary_conditions}},
-      _grid_idx{false},
-      _archive("sim", "temperature", _constants.space_step,
-               _double_grid[_grid_idx]) {
+      _double_grid{DistributedStructuredGrid<R, NDims>{
+                       _constants.domain_size, _constants.boundary_conditions,
+                       _constants.space_step},
+                   DistributedStructuredGrid<R, NDims>{
+                       _constants.domain_size, _constants.boundary_conditions,
+                       _constants.space_step}},
+      _grid_idx{false}, _archive("sim", "temperature", _constants.space_step,
+                                 _double_grid[_grid_idx]) {
     _constants.initial_conditions(_double_grid[_grid_idx]);
 }
 
@@ -63,9 +63,8 @@ auto SpmdFdmExplicitHeatEqSolver<R, NDims, InitialConditions>::run() -> void {
                                 curr.apply(last_neighbor_idx);
             }
 
-            auto delta{_gamma *
-                       (neighbor_sum -
-                        static_cast<R>(NumNeighbors) * curr.apply(idx))};
+            auto delta{_gamma * (neighbor_sum - static_cast<R>(NumNeighbors) *
+                                                    curr.apply(idx))};
             next.apply(idx) = curr.apply(idx) + delta;
             total_norm_delta += delta * delta;
         }
@@ -77,9 +76,8 @@ auto SpmdFdmExplicitHeatEqSolver<R, NDims, InitialConditions>::run() -> void {
 
         // Save
         if (current_iterations % _constants.storage_interval == 0) {
-            _archive.append_state(
-                _double_grid[_grid_idx], current_iterations,
-                current_iterations * _constants.time_step);
+            _archive.append_state(_double_grid[_grid_idx], current_iterations,
+                                  current_iterations * _constants.time_step);
         }
 
         // Check convergence
@@ -93,11 +91,19 @@ auto SpmdFdmExplicitHeatEqSolver<R, NDims, InitialConditions>::run() -> void {
     }
 }
 
-template class SpmdFdmExplicitHeatEqSolver<float, 2, ConstantInitialConditions<float>>;
-template class SpmdFdmExplicitHeatEqSolver<float, 2, ExpressionInitialConditions<float>>;
-template class SpmdFdmExplicitHeatEqSolver<float, 3, ConstantInitialConditions<float>>;
-template class SpmdFdmExplicitHeatEqSolver<float, 3, ExpressionInitialConditions<float>>;
-template class SpmdFdmExplicitHeatEqSolver<double, 2, ConstantInitialConditions<double>>;
-template class SpmdFdmExplicitHeatEqSolver<double, 2, ExpressionInitialConditions<double>>;
-template class SpmdFdmExplicitHeatEqSolver<double, 3, ConstantInitialConditions<double>>;
-template class SpmdFdmExplicitHeatEqSolver<double, 3, ExpressionInitialConditions<double>>;
+template class SpmdFdmExplicitHeatEqSolver<float, 2,
+                                           ConstantInitialConditions<float>>;
+template class SpmdFdmExplicitHeatEqSolver<float, 2,
+                                           ExpressionInitialConditions<float>>;
+template class SpmdFdmExplicitHeatEqSolver<float, 3,
+                                           ConstantInitialConditions<float>>;
+template class SpmdFdmExplicitHeatEqSolver<float, 3,
+                                           ExpressionInitialConditions<float>>;
+template class SpmdFdmExplicitHeatEqSolver<double, 2,
+                                           ConstantInitialConditions<double>>;
+template class SpmdFdmExplicitHeatEqSolver<double, 2,
+                                           ExpressionInitialConditions<double>>;
+template class SpmdFdmExplicitHeatEqSolver<double, 3,
+                                           ConstantInitialConditions<double>>;
+template class SpmdFdmExplicitHeatEqSolver<double, 3,
+                                           ExpressionInitialConditions<double>>;

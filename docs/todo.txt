@@ -32,10 +32,10 @@ Completion
 [X] Neumann Boundary Condition
 [X] Periodic Boundary Condition
 [X] Arithmetic Expression Initial Conditions
-[ ] Arithmetic Expression Convergence Conditions
 [ ] Move boundary conditions outside of DSG
 [ ] Arithmetic Expression Boundary Condition
 [ ] Reasonable Convergence Conditions
+[ ] Arithmetic Expression Convergence Conditions
 [ ] GPU (Kokkos)
 [ ] Apptainer
 [ ] Performance monitoring (HPCToolkit)

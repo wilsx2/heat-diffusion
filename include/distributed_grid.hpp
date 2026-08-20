@@ -41,6 +41,9 @@ private:
     boost::multi::array<R, NDims> _mdarray;
     Subarray _inner_subarray;
 
+    // Metadata
+    R _cell_size;
+
     // Boundary Condition
     struct FaceNeumannBoundary {
         NeumannBoundary<R> condition;
@@ -70,7 +73,7 @@ private:
     auto deinit_requests() -> void;
     template <std::size_t... I>
     auto create_subarray(std::array<int, NDims> from, std::array<int, NDims> to,
-                   std::index_sequence<I...>);
+                         std::index_sequence<I...>);
     auto
     set_local_boundaries(std::span<const AxisBoundary, NDims> axis_boundaries)
         -> void;
@@ -84,7 +87,7 @@ public:
     DistributedStructuredGrid(
         std::span<const int, NDims> size,
         std::span<const AxisBoundary, NDims> global_boundaries,
-        R default_value = 0);
+        R block_size = 1, R default_value = 0);
     ~DistributedStructuredGrid();
     auto synchronize_halos() -> void;
     auto inner_coordinates() const {
@@ -107,6 +110,8 @@ public:
     auto global_size() const -> const std::array<int, NDims> & {
         return _global_size;
     }
+    auto cell_size() const -> R { return _cell_size; }
+
     auto comm() const -> MPI_Comm { return _cart_comm; }
     auto world_rank() const -> int { return _world_rank; }
 };
